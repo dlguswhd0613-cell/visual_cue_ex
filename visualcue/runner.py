@@ -146,6 +146,7 @@ class Experiment:
         self.recording.metadata["status"] = "running"
         self.recording.save_metadata()
         self.send("START")
+        print("START sent. Waiting for Arduino SESSION_START. Ctrl+C in this terminal stops the session.", flush=True)
 
     def abort(self, reason):
         # Stop physical outputs before any possibly blocking display or disk operation.
@@ -181,6 +182,8 @@ class Experiment:
             print(f"{kind}: {value}. Gray screen remains until Q.", flush=True)
         elif kind == "READY" and self.started:
             raise RuntimeError("Arduino reset during session")
+        elif kind == "SESSION_START":
+            print(f"SESSION_START: {value}. Session started; initial marker and ITI precede the first trial.", flush=True)
         elif kind in ("TRIAL_START", "TRIAL_END", "REWARD_ON"):
             print(f"{kind}: {value}", flush=True)
 
@@ -237,12 +240,12 @@ def main(argv=None):
     parser.add_argument("--schedule", type=Path)
     parser.add_argument("--simulate", action="store_true", help="Use simulated Arduino; no hardware commands")
     parser.add_argument("--demo", action="store_true", help="Simulation only: 3 trials, initial delay 0, ITI 1 s")
-    parser.add_argument("--autostart", action="store_true", help="Simulation only: start without SPACE")
+    parser.add_argument("--autostart", action="store_true", help="Start after setup without SPACE; real hardware delivers rewards")
     parser.add_argument("--exit-when-done", action="store_true")
     parser.add_argument("--windowed", action="store_true")
     args = parser.parse_args(argv)
-    if (args.demo or args.autostart) and not args.simulate:
-        parser.error("--demo and --autostart require --simulate")
+    if args.demo and not args.simulate:
+        parser.error("--demo requires --simulate")
     if args.demo and args.schedule:
         parser.error("--demo creates its own schedule; omit --schedule")
     board = recording = app = None
