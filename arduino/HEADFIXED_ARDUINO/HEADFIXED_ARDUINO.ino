@@ -13,6 +13,11 @@
  *   CUE_OFF index                 -> host has restored the gray background
  *   PING                          -> PONG,1; send at least every 500 ms
  *   STOP                          -> close outputs immediately, abort
+ *   VALVE_CAPS                    -> VALVE_CAPS,1 (manual-valve support)
+ *   VALVE_HOLD                    -> hold valve HIGH until STOP/watchdog
+ *   VALVE_PULSE on_ms off_ms      -> repeat HIGH/LOW until STOP/watchdog
+ * Manual commands require IDLE. Pulse intervals are 10..60000 ms.
+ * Manual modes do not run trials or assert LED/TTL. PING is still required.
  * All replies are millis,EVENT,value. Reward time is measured from TRIAL_START.
  * Cue must have been acknowledged OFF before the reward deadline.
  * TTL accompanies session LED pulses, acknowledged cue, and reward pulse;
@@ -62,7 +67,7 @@ const uint32_t LICK_DEBOUNCE_MS = 50;
 
 enum SessionState : uint8_t {
   IDLE, START_MARKER, ITI, TRIAL_LEAD, WAIT_CUE_ON, CUE_VISIBLE,
-  REWARD_DELAY, VALVE_OPEN, POST_REWARD
+  REWARD_DELAY, VALVE_OPEN, POST_REWARD, MANUAL_HOLD, MANUAL_PULSE
 };
 
 SessionState state = IDLE;
@@ -90,6 +95,9 @@ uint8_t completedBlinks = 0;
 char lineBuffer[96];
 uint8_t lineLength = 0;
 bool discardingLine = false;
+uint16_t manualOnMs = 300;
+uint16_t manualOffMs = 100;
+bool manualValveHigh = false;
 
 void logEvent(const __FlashStringHelper *event, uint32_t value) {
   Serial.print(millis());
@@ -107,10 +115,16 @@ void safeOutputs() {
 }
 
 void abortSession(uint8_t reason) {
+  bool manual = state == MANUAL_HOLD || state == MANUAL_PULSE;
   safeOutputs();
+  manualValveHigh = false;
   state = IDLE;
   configured = false;
   loadedTrials = 0;
+  if (manual) {
+    logEvent(F("VALVE_OFF"), 0);
+    logEvent(F("MANUAL_END"), reason);
+  }
   logEvent(F("SESSION_ABORTED"), reason);
 }
 
@@ -188,6 +202,27 @@ void handleLine() {
     if (!readNumbers(remaining, values, 0)) { protocolError(1); return; }
     if (state != IDLE) { protocolError(3); return; }
     logEvent(F("READY"), 1);
+  } else if (strcmp(command, "VALVE_CAPS") == 0) {
+    if (!readNumbers(remaining, values, 0)) { protocolError(1); return; }
+    if (state != IDLE) { protocolError(3); return; }
+    logEvent(F("VALVE_CAPS"), 1);
+  } else if (strcmp(command, "VALVE_HOLD") == 0 || strcmp(command, "VALVE_PULSE") == 0) {
+    if (state != IDLE) { protocolError(3); return; }
+    bool pulse = strcmp(command, "VALVE_PULSE") == 0;
+    if (!readNumbers(remaining, values, pulse ? 2 : 0)) { protocolError(1); return; }
+    if (pulse && (values[0] < 10 || values[0] > 60000 || values[1] < 10 || values[1] > 60000)) {
+      protocolError(2); return;
+    }
+    safeOutputs();
+    configured = false;
+    loadedTrials = 0;
+    if (pulse) { manualOnMs = values[0]; manualOffMs = values[1]; }
+    state = pulse ? MANUAL_PULSE : MANUAL_HOLD;
+    stateStartedMs = lastHeartbeatMs = millis();
+    manualValveHigh = true;
+    digitalWrite(PIN_VALVE, HIGH);
+    logEvent(F("MANUAL_START"), pulse ? 2 : 1);
+    logEvent(F("VALVE_ON"), 0);
   } else if (strcmp(command, "CONFIG") == 0) {
     if (state != IDLE) { protocolError(3); return; }
     if (!readNumbers(remaining, values, 7)) { protocolError(1); return; }
@@ -305,6 +340,16 @@ void runSession() {
   }
   uint32_t elapsed = now - stateStartedMs;
   switch (state) {
+    case MANUAL_PULSE:
+      if (elapsed >= (manualValveHigh ? manualOnMs : manualOffMs)) {
+        manualValveHigh = !manualValveHigh;
+        stateStartedMs = now;
+        digitalWrite(PIN_VALVE, manualValveHigh ? HIGH : LOW);
+        logEvent(manualValveHigh ? F("VALVE_ON") : F("VALVE_OFF"), 0);
+      }
+      break;
+    case MANUAL_HOLD:
+      break;
     case START_MARKER:
       if (elapsed >= 500) {
         markerOn = !markerOn;

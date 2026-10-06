@@ -101,6 +101,34 @@ int main() {
  reset();command("CONFIG 1 0 1000 1001 4000 30 0");command("TRIAL 1 0 1");command("START");
  until(WAIT_CUE_ON);command("CUE_ON 1");until(IDLE);assert(has(",SESSION_ABORTED,7\n"));assertSafe();
  std::cout<<"PASS absolute reward deadline withoutOFF aborts instead of late delivery\n";
+ reset();command("VALVE_CAPS");assert(has(",VALVE_CAPS,1\n"));assertSafe();
+ command("VALVE_HOLD");assert(state==MANUAL_HOLD);assert(pins[12]==HIGH);
+ assert(pins[9]==LOW && pins[10]==LOW && pins[6]==LOW);
+ tick(5000);assert(pins[12]==HIGH);assert(!has(",REWARD_ON,"));
+ command("STOP");assert(state==IDLE);assertSafe();assert(has(",MANUAL_END,1\n"));
+ std::cout<<"PASS manual hold stays open with heartbeat and STOP closes without cue/TTL\n";
+ reset();command("VALVE_PULSE 300 100");assert(state==MANUAL_PULSE);
+ for(unsigned cycle=0;cycle<5;cycle++) {
+  assert(pins[12]==HIGH);tick(299);assert(pins[12]==HIGH);
+  tick(1);assert(pins[12]==LOW);tick(99);assert(pins[12]==LOW);
+  tick(1);assert(pins[12]==HIGH);
+ }
+ command("STOP");assertSafe();
+ reset();command("VALVE_PULSE 30 100");tick(30);assert(pins[12]==LOW);
+ command("STOP");tick(500);assertSafe();
+ std::cout<<"PASS pulse widths and STOP during either phase prevent further opening\n";
+ for(const std::string mode : {"VALVE_HOLD", "VALVE_PULSE 300 100"}) {
+  reset();command(mode);tick(2000,false);assert(state==IDLE);assertSafe();
+  assert(has(",SESSION_ABORTED,2\n"));
+ }
+ reset();command("VALVE_PULSE 0 100");assert(state==IDLE);assertSafe();assert(has(",ERROR,2\n"));
+ reset();command("VALVE_PULSE 300 60001");assert(state==IDLE);assertSafe();
+ reset();configure();command("VALVE_HOLD");assert(state==IDLE);assertSafe();assert(has(",ERROR,3\n"));
+ reset();command("VALVE_HOLD");command("START");assert(state==IDLE);assertSafe();
+ std::cout<<"PASS manual watchdog, invalid timings, and conditioning/manual exclusion\n";
+ reset();fakeNow=UINT32_MAX-50;command("VALVE_PULSE 300 100");tick(300);assert(pins[12]==LOW);
+ tick(100);assert(pins[12]==HIGH);command("STOP");assertSafe();
+ std::cout<<"PASS manual pulse timing across millis rollover\n";
  reset();configure(100,33,90);auto sessionStart=fakeNow;unsigned cueCount=0;
  while(state!=IDLE && uint32_t(fakeNow-sessionStart)<5000000) {
   if(state==WAIT_CUE_ON) {command("CUE_ON "+std::to_string(trialIndex+1));++cueCount;}

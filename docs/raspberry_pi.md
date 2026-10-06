@@ -55,7 +55,7 @@ arduino/HEADFIXED_ARDUINO/HEADFIXED_ARDUINO.ino
 
 보드는 **Arduino Uno**, 포트는 연결한 Uno에 해당하는 포트를 선택한 뒤 업로드합니다. IDE에서 컴파일만 하는 동작과 실제 보드에 업로드하는 동작은 다릅니다. 업로드 뒤에는 IDE의 시리얼 모니터를 닫으세요. Python과 시리얼 모니터가 동시에 같은 포트를 사용할 수 없습니다.
 
-기존 연구실 배선인 부저 D6, 밸브 제어 D12, lick 센서 D11, LED D10, TTL D9를 사용합니다. Python 프로그램과 이 새 스케치는 함께 사용해야 합니다. `reference/`의 기존 스케치는 새 프로그램의 통신 규약과 다릅니다.
+기존 연구실 배선인 부저 D6, 밸브 제어 D12, lick 센서 D11, LED D10, TTL D9를 사용합니다. Python 프로그램과 이 새 스케치는 함께 사용해야 합니다. `reference/`의 기존 스케치는 새 프로그램의 통신 규약과 다릅니다. 실험 전 물 공급만 시험하려면 [밸브 점검 안내](valve_test.md)의 `prime_valve.py`를 사용하세요.
 
 ## USB 포트 확인
 
