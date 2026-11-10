@@ -16,14 +16,44 @@ class TaskTests(unittest.TestCase):
     def test_requested_timeline_and_all_rewarded_schedule(self):
         config = self.config
         session = config["session"]
-        self.assertEqual(configuration_command(config), "CONFIG 100 1000 2000 9000 4000 30 90")
+        self.assertEqual(configuration_command(config), "CONFIG 100 1000 2000 6000 4000 30 90")
+        self.assertEqual(session["cue_duration_ms"], 2000)
+        self.assertEqual(session["reward_at_ms"] - session["cue_delay_ms"]
+                         - session["cue_duration_ms"], 3000)
         rows, seed = generate_schedule(session, 123)
         self.assertEqual(seed, 123)
         self.assertEqual(len(rows), 100)
         self.assertEqual(rows[0], {"Trial": 1, "ITI_Duration_S": 90, "Rewarded": 1})
         self.assertTrue(all(row["Rewarded"] == 1 for row in rows))
-        self.assertTrue(all(row["ITI_Duration_S"] == 33 for row in rows[1:]))
-        self.assertEqual(session["reward_at_ms"] + session["post_reward_ms"] + 33000, 46000)
+        self.assertTrue(all(10 <= row["ITI_Duration_S"] <= 20 for row in rows[1:]))
+        self.assertEqual(session["iti_distribution"], "exponential")
+
+    def test_truncated_exponential_distribution(self):
+        import math
+        from collections import Counter
+        session = dict(self.config["session"], trials=20001)
+        rows, _ = generate_schedule(session, 123)
+        counts = Counter(row["ITI_Duration_S"] for row in rows[1:])
+        self.assertEqual(set(counts), set(range(10, 21)))
+        weights = {k: math.exp(-(k - 10) / 3) for k in range(10, 21)}
+        total = sum(weights.values())
+        for k, weight in weights.items():
+            self.assertAlmostEqual(counts[k] / 20000, weight / total, delta=.01)
+        self.assertGreater(counts[10], counts[15])
+        self.assertGreater(counts[15], counts[20])
+
+    def test_legacy_uniform_and_fixed_schedules(self):
+        import random
+        session = dict(self.config["session"], iti_min_s=10, iti_max_s=20)
+        session.pop("iti_distribution")
+        session.pop("iti_exponential_scale_s")
+        rows, _ = generate_schedule(session, 123)
+        rng = random.Random(123)
+        self.assertEqual([r["ITI_Duration_S"] for r in rows[1:]],
+                         [rng.randint(10, 20) for _ in rows[1:]])
+        session.update(iti_distribution="exponential", iti_min_s=1, iti_max_s=1)
+        rows, _ = generate_schedule(session, 123)
+        self.assertTrue(all(r["ITI_Duration_S"] == 1 for r in rows[1:]))
 
     def test_seed_reuses_random_itis_when_requested(self):
         session = self.config["session"]
@@ -51,7 +81,9 @@ class TaskTests(unittest.TestCase):
 
     def test_invalid_timing_and_unknown_key_rejected(self):
         for field, value in (("reward_at_ms", 3000), ("post_reward_ms", 29), ("trials", 201),
-                             ("cue_duration_ms", True), ("valve_open_ms", -1)):
+                             ("cue_duration_ms", True), ("valve_open_ms", -1),
+                             ("iti_distribution", "unknown"), ("iti_exponential_scale_s", 0),
+                             ("iti_exponential_scale_s", True), ("iti_exponential_scale_s", float("nan"))):
             with self.subTest(field=field):
                 config = load_config()
                 config["session"][field] = value

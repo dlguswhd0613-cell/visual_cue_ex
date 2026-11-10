@@ -27,7 +27,9 @@ def validate_config(config):
     if not isinstance(config, dict) or set(config) != set(expected):
         raise ValueError("Config requires exactly serial, session, display, stimulus sections")
     for section, keys in expected.items():
-        if not isinstance(config[section], dict) or set(config[section]) != keys:
+        optional = {"iti_distribution", "iti_exponential_scale_s"} if section == "session" else set()
+        if (not isinstance(config[section], dict) or not keys <= set(config[section])
+                or set(config[section]) - keys - optional):
             raise ValueError(f"Unexpected or missing keys in {section}; expected {sorted(keys)}")
 
     def integer(section, name, low, high):
@@ -42,6 +44,12 @@ def validate_config(config):
                             ("iti_max_s", 0, 65535)):
         integer("session", name, low, high)
     session = config["session"]
+    if session.get("iti_distribution", "uniform") not in ("uniform", "exponential"):
+        raise ValueError("session.iti_distribution must be uniform or exponential")
+    scale = session.get("iti_exponential_scale_s", 3.0)
+    if (isinstance(scale, bool) or not isinstance(scale, (int, float))
+            or not math.isfinite(scale) or scale <= 0):
+        raise ValueError("session.iti_exponential_scale_s must be finite and >0")
     if session["reward_at_ms"] <= session["cue_delay_ms"] + session["cue_duration_ms"]:
         raise ValueError("reward_at_ms must be after cue_delay_ms + cue_duration_ms")
     if session["post_reward_ms"] < session["valve_open_ms"]:

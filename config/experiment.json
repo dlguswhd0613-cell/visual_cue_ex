@@ -4,12 +4,14 @@
     "trials": 100,
     "cue_delay_ms": 1000,
     "cue_duration_ms": 2000,
-    "reward_at_ms": 9000,
+    "reward_at_ms": 6000,
     "post_reward_ms": 4000,
     "valve_open_ms": 30,
     "initial_iti_s": 90,
-    "iti_min_s": 33,
-    "iti_max_s": 33,
+    "iti_min_s": 10,
+    "iti_max_s": 20,
+    "iti_distribution": "exponential",
+    "iti_exponential_scale_s": 3.0,
     "seed": null
   },
   "display": {
@@ -21,11 +23,11 @@
     "max_cue_overrun_ms": 100
   },
   "stimulus": {
-    "diameter_px": 240,
-    "cycles_per_patch": 6.0,
+    "diameter_px": 370,
+    "cycles_per_patch": 2.0,
     "orientation_deg": 0.0,
     "contrast": 1.0,
-    "sigma_fraction": 0.2,
+    "sigma_fraction": 0.29578217,
     "phase_deg": 0.0
   }
 }
