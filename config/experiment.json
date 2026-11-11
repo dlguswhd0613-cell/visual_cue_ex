@@ -24,8 +24,8 @@
   },
   "stimulus": {
     "diameter_px": 370,
-    "cycles_per_patch": 2.0,
-    "orientation_deg": 0.0,
+    "cycles_per_patch": 4,
+    "orientation_deg": 45,
     "contrast": 1.0,
     "sigma_fraction": 0.29578217,
     "phase_deg": 0.0
