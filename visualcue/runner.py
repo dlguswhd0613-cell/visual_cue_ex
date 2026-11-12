@@ -49,8 +49,8 @@ class Experiment:
             raise ValueError(f"Display {index} not found; available: {len(sizes)}")
         fullscreen = display["fullscreen"] and not windowed
         size = sizes[index] if fullscreen else (display["window_width"], display["window_height"])
-        if config["stimulus"]["diameter_px"] > min(size[0] // 2, size[1]):
-            raise ValueError(f"Gabor diameter exceeds left half of display {size}; reduce diameter_px")
+        if config["stimulus"]["diameter_px"] > min(size):
+            raise ValueError(f"Gabor diameter exceeds display {size}; reduce diameter_px")
         flags = pygame.FULLSCREEN if fullscreen else 0
         # SCALED requests SDL vsync. Native resolution preserves physical pixel size.
         # The dummy driver used by CI has no hardware renderer or vsync.
@@ -64,7 +64,7 @@ class Experiment:
         pixels = make_gabor(**config["stimulus"], background_gray=self.gray)
         self.texture = pygame.surfarray.make_surface(pixels.swapaxes(0, 1)).convert()
         width, height = self.screen.get_size()
-        self.target = self.texture.get_rect(center=(width // 4, height // 2))
+        self.target = self.texture.get_rect(center=(width // 2, height // 2))
         self.recording.metadata["display"] = {"resolution": list(self.screen.get_size()),
             "stimulus_center_px": list(self.target.center),
             "driver": pygame.display.get_driver(), "vsync_requested": self.vsync_requested,
