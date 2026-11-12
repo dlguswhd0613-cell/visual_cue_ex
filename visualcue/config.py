@@ -65,6 +65,10 @@ def validate_config(config):
         integer("photometry", "reward_lead_ms", 0,
                 session["reward_at_ms"] - session["cue_delay_ms"] - session["cue_duration_ms"])
         integer("photometry", "pulse_ms", 1, 1000)
+        cue_at = session["cue_delay_ms"] - p["cue_lead_ms"]
+        reward_at = session["reward_at_ms"] - p["reward_lead_ms"]
+        if p["pulse_ms"] >= reward_at - cue_at:
+            raise ValueError("photometry pulses need a LOW gap between cue and reward on D7")
     if session["iti_max_s"] < session["iti_min_s"]:
         raise ValueError("iti_max_s must be >= iti_min_s")
     if session["seed"] is not None and type(session["seed"]) is not int:

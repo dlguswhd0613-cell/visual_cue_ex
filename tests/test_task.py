@@ -118,6 +118,14 @@ class TaskTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_config(config)
 
+    def test_shared_trigger_requires_low_gap(self):
+        self.config["session"].update(cue_duration_ms=10, reward_at_ms=2000)
+        self.config["photometry"].update(cue_lead_ms=0, reward_lead_ms=990, pulse_ms=10)
+        with self.assertRaises(ValueError):
+            validate_config(self.config)
+        self.config["photometry"]["pulse_ms"] = 9
+        validate_config(self.config)
+
     def test_recording_labels_simulation_and_preserves_unique_sessions(self):
         rows, seed = generate_schedule(self.config["session"], 7)
         with tempfile.TemporaryDirectory() as directory:

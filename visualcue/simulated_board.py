@@ -35,6 +35,7 @@ class SimulatedBoard:
         self._trigger_edges: dict[str, int] = {}
         self.cue_trigger_on = False
         self.reward_trigger_on = False
+        self._trigger_low_since = self._now()
         self.valve_on = False
         self.closed = False
         self._emit("READY", 1)
@@ -122,20 +123,27 @@ class SimulatedBoard:
             self._error(4)
         elif (values[0] > self._config[1]
               or values[1] > self._config[3] - self._config[1] - self._config[2]
-              or not 1 <= values[2] <= 1000):
+              or not 1 <= values[2] <= 1000
+              or values[2] >= (self._config[3] - values[1]) - (self._config[1] - values[0])):
             self._error(2)
         else:
             self._triggers = values
-            self._emit("TRIGGERS_OK", 1)
+            self._emit("TRIGGERS_OK", 2)
+
+    @property
+    def trigger_on(self) -> bool:
+        """Shared D7 logic level for both cue and reward markers."""
+        return self.cue_trigger_on or self.reward_trigger_on
 
     def _schedule_trigger(self, kind: str, at: int) -> None:
         assert self._triggers is not None
         self._trigger_edges[f"{kind}_TRIGGER_ON"] = at
         self._trigger_edges[f"{kind}_TRIGGER_OFF"] = at + self._triggers[2]
 
-    def _clear_triggers(self) -> None:
+    def _clear_triggers(self, at: int | None = None) -> None:
         self._trigger_edges.clear()
         self.cue_trigger_on = self.reward_trigger_on = False
+        self._trigger_low_since = self._now() if at is None else at
 
     def _load_trial(self, values: tuple[int, ...]) -> None:
         if self._state != "idle":
@@ -200,7 +208,7 @@ class SimulatedBoard:
 
     def _finish_trial(self, at: int) -> None:
         assert self._config is not None
-        self._clear_triggers()
+        self._clear_triggers(at)
         self._emit("TRIAL_END", self._trial, at)
         if self._trial == self._config[0]:
             self._state = "idle"
@@ -233,6 +241,12 @@ class SimulatedBoard:
             if edges:
                 for name in edges:
                     del self._trigger_edges[name]
+                    if name.endswith("_ON"):
+                        if self.trigger_on or at - self._trigger_low_since < 1:
+                            self._stop(8)
+                            return
+                    else:
+                        self._trigger_low_since = at
                     if name.startswith("CUE_"):
                         self.cue_trigger_on = name.endswith("_ON")
                     else:

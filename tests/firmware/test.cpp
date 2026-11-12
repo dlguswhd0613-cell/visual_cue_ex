@@ -15,6 +15,7 @@ void tick(uint32_t duration, bool heartbeat=true) {
   ++fakeNow;
   if (heartbeat && fakeNow % 500 == 0) command("PING");
   loop();
+  assert(pins[8]==LOW);
  }
 }
 bool has(const std::string &s) {return Serial.output.find(s)!=std::string::npos;}
@@ -154,15 +155,15 @@ int main() {
   tick(19);assert(pins[7]==HIGH);tick(1);assert(pins[7]==LOW);
   tick(80);assert(state==WAIT_CUE_ON);
   command("CUE_ON "+std::to_string(trial));tick(2000);command("CUE_OFF "+std::to_string(trial));
-  tick(2899);assert(pins[8]==LOW);tick(1);assert(pins[8]==HIGH && pins[12]==LOW);
+  tick(2899);assert(pins[7]==LOW);tick(1);assert(pins[7]==HIGH && pins[12]==LOW);
   assert(has(std::to_string(uint32_t(start+5900))+",REWARD_TRIGGER_ON,"+std::to_string(trial)+"\n"));
-  tick(19);assert(pins[8]==HIGH);tick(1);assert(pins[8]==LOW);
+  tick(19);assert(pins[7]==HIGH);tick(1);assert(pins[7]==LOW);
   tick(80);assert(state==VALVE_OPEN && pins[12]==HIGH);assert(fakeNow-start==6000);
   tick(4000);assertSafe();
   if(trial==1)until(TRIAL_LEAD);
  }
  assert(state==IDLE);
- std::cout<<"PASS separate D7/D8 pulses100ms before cue/reward,20ms wide, reset each trial\n";
+ std::cout<<"PASS shared D7 pulses100ms before cue/reward,20ms wide, reset each trial\n";
  reset();configureTriggers(false);toCue();tick(2000);command("CUE_OFF 1");until(IDLE);
  assert(has(",CUE_TRIGGER_ON,1\n"));assert(!has(",REWARD_TRIGGER_ON,"));assertSafe();
  reset();configure();toReward();tick(4000);assert(!has("TRIGGER_ON"));assertSafe();
@@ -171,7 +172,7 @@ int main() {
  for(bool reward : {false,true}) {
   reset();configureTriggers();until(TRIAL_LEAD);
   if(reward) {toCue();tick(2000);command("CUE_OFF 1");tick(2900);} else tick(900);
-  assert(pins[reward?8:7]==HIGH);command("STOP");assertSafe();tick(10000);assertSafe();
+  assert(pins[7]==HIGH);command("STOP");assertSafe();tick(10000);assertSafe();
   assert(!has(",REWARD_ON,"));
  }
  reset();configureTriggers();until(TRIAL_LEAD);tick(900);lastHeartbeatMs=fakeNow-2000;
@@ -194,15 +195,28 @@ int main() {
  reset();fakeNow=UINT32_MAX-3909;configureTriggers();until(TRIAL_LEAD);tick(900);
  assert(pins[7]==HIGH);tick(20);assert(pins[7]==LOW);until(WAIT_CUE_ON);
  command("CUE_ON 1");tick(2000);command("CUE_OFF 1");tick(2900);
- assert(pins[8]==HIGH);tick(20);assert(pins[8]==LOW);until(IDLE);assertSafe();
+ assert(pins[7]==HIGH);tick(20);assert(pins[7]==LOW);until(IDLE);assertSafe();
  reset();configureTriggers(true,1,0);toCue();assert(pins[7]==HIGH);
- tick(2000);command("CUE_OFF 1");until(VALVE_OPEN);assert(pins[8]==HIGH);
+ tick(2000);command("CUE_OFF 1");until(VALVE_OPEN);assert(pins[7]==HIGH);
  assert(Serial.output.find(",REWARD_TRIGGER_ON,") < Serial.output.find(",REWARD_ON,"));
  tick(4000);assertSafe();
  std::cout<<"PASS trigger pulse expiry across millis rollover and zero-lead event ordering\n";
  reset();command("CONFIG 2 1000 2000 6000 30 30 0");command("TRIGGERS 100 100 1000");
  command("TRIAL 1 0 1");command("TRIAL 2 0 1");command("START");toReward();
- assert(pins[8]==HIGH);tick(30);assert(state==ITI);assertSafe();
+ assert(pins[7]==HIGH);tick(30);assert(state==ITI);assertSafe();
  until(TRIAL_LEAD);assertSafe();command("STOP");
  std::cout<<"PASS trial end truncates long trigger pulses before the next trial\n";
+ reset();command("CONFIG 1 1000 10 2000 4000 30 0");
+ command("TRIGGERS 0 990 20");assert(!triggersEnabled); // Overlap.
+ command("TRIGGERS 0 990 10");assert(!triggersEnabled); // No LOW gap.
+ command("TRIGGERS 0 990 9");assert(triggersEnabled);assert(has(",TRIGGERS_OK,2\n"));
+ command("TRIAL 1 0 1");command("START");until(WAIT_CUE_ON);
+ command("CUE_ON 1");tick(10);command("CUE_OFF 1");assert(pins[7]==HIGH && pins[8]==LOW);
+ tick(9);assert(pins[7]==LOW);command("STOP");assertSafe();
+ // A late cue trigger can overlap despite a valid nominal schedule.
+ reset();command("CONFIG 1 1000 10 2000 4000 30 0");command("TRIGGERS 100 990 105");
+ command("TRIAL 1 0 1");command("START");until(TRIAL_LEAD);fakeNow+=999;command("PING");
+ assert(pins[7]==HIGH);tick(1);command("CUE_ON 1");tick(10);command("CUE_OFF 1");
+ assert(state==IDLE);assert(has(",SESSION_ABORTED,8\n"));assertSafe();
+ std::cout<<"PASS shared trigger requires a LOW gap and aborts if delayed pulses overlap\n";
 }

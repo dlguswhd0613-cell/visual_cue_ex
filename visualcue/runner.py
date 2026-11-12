@@ -119,6 +119,8 @@ class Experiment:
             for _, kind, actual in self.read_events():
                 if kind == "SESSION_ABORTED":
                     raise RuntimeError(f"Arduino aborted during configuration: {actual}")
+                if kind == expected == "TRIGGERS_OK" and actual != value:
+                    raise RuntimeError("Upload the updated Uno sketch: shared D7 triggers require TRIGGERS_OK,2")
                 if kind == expected and actual == value:
                     return
             time.sleep(.005)
@@ -137,7 +139,7 @@ class Experiment:
         self.exchange(configuration_command(self.config), "CONFIG_OK", len(self.rows))
         trigger_command = photometry_command(self.config)
         if trigger_command:
-            self.exchange(trigger_command, "TRIGGERS_OK", 1)
+            self.exchange(trigger_command, "TRIGGERS_OK", 2)
         for row in self.rows:
             self.exchange(f"TRIAL {row['Trial']} {row['ITI_Duration_S']} {row['Rewarded']}", "TRIAL_OK", row["Trial"])
         self.recording.metadata["status"] = "ready"

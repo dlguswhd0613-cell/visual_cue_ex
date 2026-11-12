@@ -70,9 +70,11 @@ class SimulatedBoardTests(unittest.TestCase):
         self.finish_cue()
         self.advance(5900)
         self.assertTrue(self.board.reward_trigger_on)
+        self.assertTrue(self.board.trigger_on)
         self.assertFalse(self.board.valve_on)
         self.advance(20)
         self.assertFalse(self.board.reward_trigger_on)
+        self.assertFalse(self.board.trigger_on)
         self.advance(80)
         self.assertTrue(self.board.valve_on)
         self.assertEqual(self.matching("CUE_TRIGGER_ON"), [(3900, "CUE_TRIGGER_ON", 1)])
@@ -86,9 +88,11 @@ class SimulatedBoardTests(unittest.TestCase):
         self.start(triggers=True)
         self.advance(900)
         self.assertTrue(self.board.cue_trigger_on)
+        self.assertTrue(self.board.trigger_on)
         self.send("STOP")
         self.assertFalse(self.board.cue_trigger_on)
         self.assertFalse(self.board.reward_trigger_on)
+        self.assertFalse(self.board.trigger_on)
         self.advance(20000)
         self.assertFalse(self.matching("REWARD_TRIGGER_ON"))
         self.assertFalse(self.matching("REWARD_ON"))
@@ -103,8 +107,10 @@ class SimulatedBoardTests(unittest.TestCase):
         self.finish_cue()
         self.advance(3000)
         self.assertTrue(self.board.reward_trigger_on)
+        self.assertTrue(self.board.trigger_on)
         self.advance(30)
         self.assertFalse(self.board.reward_trigger_on)
+        self.assertFalse(self.board.trigger_on)
         self.assertEqual(len(self.matching("TRIAL_START")), 2)
 
     def test_no_reward_trigger_for_omitted_reward(self):
@@ -122,12 +128,20 @@ class SimulatedBoardTests(unittest.TestCase):
             self.send("TRIGGERS " + args)
             self.assertEqual(self.matching("ERROR")[-1][2], 2)
         self.send("TRIGGERS 100 100 20")
-        self.assertEqual(self.matching("TRIGGERS_OK")[-1][2], 1)
+        self.assertEqual(self.matching("TRIGGERS_OK")[-1][2], 2)
         self.start()  # New CONFIG clears the earlier trigger settings.
         self.finish_cue()
         self.advance(10000)
         self.assertFalse(self.matching("CUE_TRIGGER_ON"))
         self.assertFalse(self.matching("REWARD_TRIGGER_ON"))
+
+    def test_shared_trigger_rejects_overlap_and_zero_low_gap(self):
+        self.send("CONFIG 1 1000 10 2000 4000 30 0")
+        for width in (20, 10):
+            self.send(f"TRIGGERS 0 990 {width}")
+            self.assertEqual(self.matching("ERROR")[-1][2], 2)
+        self.send("TRIGGERS 0 990 9")
+        self.assertEqual(self.matching("TRIGGERS_OK")[-1][2], 2)
 
     def test_reward_is_at_trial_second_nine_despite_small_display_latency(self):
         self.start()
