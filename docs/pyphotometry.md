@@ -4,6 +4,31 @@ Akam & Walton (2019), *pyPhotometry: Open source Python based hardware and softw
 
 계속 HIGH인 고정 전압은 처음 한 번만 상승 에지를 만듭니다. 이 코드에서는 평소 LOW, 이벤트마다 짧은 HIGH 펄스를 출력합니다. pyPhotometry가 신호를 취득하고 평균을 표시하므로 pyboard의 펌웨어를 이 저장소의 코드로 교체하지 않습니다.
 
+## D7 TTL만 단독 시험하기
+
+event plot에 신호가 들어오는지 확인할 때는 행동 세션 대신 [test_ttl.py](../test_ttl.py)를 실행합니다. Pi가 USB로 Uno에 명령을 보내고 **Uno D7만** 펄스를 출력합니다. Pi GPIO를 사용하는 코드는 아닙니다. 밸브·화면 자극·시작 LED·D9 TTL은 출력하지 않습니다.
+
+1. Pi와 업로드에 사용하는 컴퓨터에서 저장소를 업데이트하고, **이번 버전의 Uno 스케치를 다시 업로드**합니다. 이전 스케치는 `TTL_CAPS`/`TTL_PULSE`를 지원하지 않습니다.
+2. 기존 행동 프로그램과 Uno를 사용하는 시리얼 모니터를 종료합니다. pyPhotometry GUI는 계속 사용합니다.
+3. D7 → 전압 변환 → Digital 1 Signal, Uno GND → Digital 1 GND 배선을 유지합니다.
+4. pyPhotometry GUI의 수집을 먼저 시작하고 Event triggered plot을 켭니다.
+5. Pi의 저장소 폴더에서 실행합니다. `DISPLAY=:0`이나 시행표는 필요하지 않습니다.
+
+```bash
+cd ~/visual_cue_ex
+python3 test_ttl.py --port /dev/ttyACM0
+```
+
+연결 확인 후 5초 대기하고, 20ms 펄스를 10초 간격으로 5번 출력합니다. 터미널에는 Uno의 `TTL_ON`/`TTL_OFF` 시각이 표시됩니다. GUI의 전후 구간이 모일 수 있도록 첫 펄스 후 최소 8초 기다려 확인하세요. 마지막 펄스 이후에도 pyPhotometry 수집을 8초 이상 유지합니다. Ctrl+C로 중단하면 STOP을 보내 D7을 LOW로 내립니다. host가 끊겨도 Uno가 펄스를 최대 1000ms로 제한합니다. USB/시리얼 지연에 따라 반복 간격에는 오차가 있을 수 있습니다.
+
+100ms 폭으로 비교하려면:
+
+```bash
+python3 test_ttl.py --port /dev/ttyACM0 --pulse-ms 100 --interval 10 --count 5
+```
+
+이 시험은 이벤트 기준 신호를 확인하는 절차입니다. 신호를 받으면 평균 곡선을 그릴 수 있지만, 행동 자극을 제시하지 않으므로 신경 반응의 크기까지 보장하지는 않습니다. `TTL_ON/OFF` 기록만으로 실제 전압 수신을 입증할 수는 없습니다. 터미널에는 펄스가 나오지만 GUI가 비어 있다면 Digital 1 기록 또는 오실로스코프로 배선과 전압을 확인합니다.
+
 ## 출력과 시간표
 
 | Uno 핀 | 기본 신호 | 기본 시점: 시행 시작 기준 | HIGH 지속 시간 |

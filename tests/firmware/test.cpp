@@ -219,4 +219,24 @@ int main() {
  assert(pins[7]==HIGH);tick(1);command("CUE_ON 1");tick(10);command("CUE_OFF 1");
  assert(state==IDLE);assert(has(",SESSION_ABORTED,8\n"));assertSafe();
  std::cout<<"PASS shared trigger requires a LOW gap and aborts if delayed pulses overlap\n";
+ reset();command("TTL_CAPS");assert(has(",TTL_CAPS,1\n"));assertSafe();
+ for(unsigned width : {1U,20U,100U,1000U}) {
+  command("TTL_PULSE "+std::to_string(width));assert(state==TTL_TEST);
+  assert(pins[7]==HIGH && pins[12]==LOW && pins[9]==LOW && pins[10]==LOW && pins[6]==LOW);
+  tick(width-1);assert(pins[7]==HIGH);tick(1);assert(state==IDLE);assertSafe();
+ }
+ assert(has(",TTL_ON,1\n") && has(",TTL_OFF,1\n"));
+ assert(!has(",REWARD_ON,") && !has(",CUE_REQUEST,"));
+ std::cout<<"PASS standalone D7 pulse widths1/20/100/1000ms without valve/cue/LED/D9\n";
+ reset();command("TTL_PULSE 1000");tick(10);command("STOP");assertSafe();tick(2000);assertSafe();
+ reset();command("TTL_PULSE 20");fakeNow+=2000;loop();assertSafe();assert(state==IDLE);
+ reset();fakeNow=UINT32_MAX-10;command("TTL_PULSE 20");tick(20);assertSafe();assert(state==IDLE);
+ std::cout<<"PASS TTL-only STOP, host disappearance and millis rollover return LOW\n";
+ for(const std::string args : {"0", "1001", "-1", "20 30"}) {
+  reset();command("TTL_PULSE "+args);assert(state==IDLE);assertSafe();
+ }
+ reset();configure();command("TTL_PULSE 20");assert(state==IDLE);assertSafe();assert(!has(",TTL_ON,"));
+ reset();command("VALVE_HOLD");command("TTL_PULSE 20");assertSafe();assert(!has(",TTL_ON,"));
+ reset();command("TTL_PULSE 1000");command("VALVE_HOLD");assertSafe();assert(state==IDLE);
+ std::cout<<"PASS TTL-only bounds and mutual exclusion with conditioning/manual valve\n";
 }

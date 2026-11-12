@@ -48,6 +48,8 @@ Lick은 D11의 LOW→HIGH 전환으로 감지하고, 직전 감지 이후 50ms �
 
 ## 빠른 실행
 
+**pyPhotometry TTL만 시험:** 최신 Uno 스케치를 업로드한 뒤 `python3 test_ttl.py --port /dev/ttyACM0`을 실행하면 D7에서만 20ms 펄스를 10초 간격으로 5번 보냅니다. 행동 프로그램은 종료하고 pyPhotometry 수집을 먼저 시작하세요. [단독 시험 안내](docs/pyphotometry.md#d7-ttl만-단독-시험하기)를 참고하세요.
+
 Python 3.10 이상과 [requirements.txt](requirements.txt)의 패키지가 필요합니다. 아래 명령은 저장소 폴더에서 실행합니다.
 
 ```bash

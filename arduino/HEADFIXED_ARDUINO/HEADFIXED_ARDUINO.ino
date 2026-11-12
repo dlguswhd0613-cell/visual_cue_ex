@@ -21,6 +21,9 @@
  *   VALVE_CAPS                    -> VALVE_CAPS,1 (manual-valve support)
  *   VALVE_HOLD                    -> hold valve HIGH until STOP/watchdog
  *   VALVE_PULSE on_ms off_ms      -> repeat HIGH/LOW until STOP/watchdog
+ *   TTL_CAPS                      -> TTL_CAPS,1 (standalone D7 test support)
+ *   TTL_PULSE pulse_ms            -> D7-only pulse, TTL_ON,1 then TTL_OFF,1
+ * TTL test requires IDLE, width 1..1000ms; no valve, cue or start marker.
  * Manual commands require IDLE. Pulse intervals are 10..60000 ms.
  * Manual modes do not run trials or assert LED/TTL. PING is still required.
  * All replies are millis,EVENT,value. Reward time is measured from TRIAL_START.
@@ -75,7 +78,7 @@ const uint32_t LICK_DEBOUNCE_MS = 50;
 
 enum SessionState : uint8_t {
   IDLE, START_MARKER, ITI, TRIAL_LEAD, WAIT_CUE_ON, CUE_VISIBLE,
-  REWARD_DELAY, VALVE_OPEN, POST_REWARD, MANUAL_HOLD, MANUAL_PULSE
+  REWARD_DELAY, VALVE_OPEN, POST_REWARD, MANUAL_HOLD, MANUAL_PULSE, TTL_TEST
 };
 
 SessionState state = IDLE;
@@ -114,6 +117,7 @@ bool cueTriggerSent = false, rewardTriggerSent = false;
 bool cueTriggerHigh = false, rewardTriggerHigh = false;
 uint32_t cueTriggerStartedMs = 0, rewardTriggerStartedMs = 0;
 uint32_t triggerLowSinceMs = 0;
+uint16_t testPulseMs = 20;
 
 void logEvent(const __FlashStringHelper *event, uint32_t value) {
   Serial.print(millis());
@@ -189,6 +193,12 @@ void closeRewardIfDue() {
 
 void closeTriggersIfDue() {
   uint32_t now = millis();
+  if (state == TTL_TEST && uint32_t(now - stateStartedMs) >= testPulseMs) {
+    digitalWrite(PIN_EVENT_TRIGGER, LOW);
+    triggerLowSinceMs = now;
+    state = IDLE;
+    logEvent(F("TTL_OFF"), 1);
+  }
   bool closeCue = cueTriggerHigh && uint32_t(now - cueTriggerStartedMs) >= triggerPulseMs;
   bool closeReward = rewardTriggerHigh && uint32_t(now - rewardTriggerStartedMs) >= triggerPulseMs;
   // Lower the shared output before writing potentially blocking serial records.
@@ -257,6 +267,23 @@ void handleLine() {
     if (!readNumbers(remaining, values, 0)) { protocolError(1); return; }
     if (state != IDLE) { protocolError(3); return; }
     logEvent(F("READY"), 1);
+  } else if (strcmp(command, "TTL_CAPS") == 0) {
+    if (!readNumbers(remaining, values, 0)) { protocolError(1); return; }
+    if (state != IDLE) { protocolError(3); return; }
+    logEvent(F("TTL_CAPS"), 1);
+  } else if (strcmp(command, "TTL_PULSE") == 0) {
+    if (state != IDLE) { protocolError(3); return; }
+    if (!readNumbers(remaining, values, 1)) { protocolError(1); return; }
+    if (values[0] < 1 || values[0] > 1000) { protocolError(2); return; }
+    safeOutputs();
+    configured = false;
+    loadedTrials = 0;
+    triggersEnabled = false;
+    testPulseMs = values[0];
+    state = TTL_TEST;
+    stateStartedMs = lastHeartbeatMs = millis();
+    digitalWrite(PIN_EVENT_TRIGGER, HIGH);
+    logEvent(F("TTL_ON"), 1);
   } else if (strcmp(command, "VALVE_CAPS") == 0) {
     if (!readNumbers(remaining, values, 0)) { protocolError(1); return; }
     if (state != IDLE) { protocolError(3); return; }
@@ -420,6 +447,7 @@ void runSession() {
       }
       break;
     case MANUAL_HOLD:
+    case TTL_TEST: // Pulse is closed before serial processing in loop().
       break;
     case START_MARKER:
       if (elapsed >= 500) {
