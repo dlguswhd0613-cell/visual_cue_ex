@@ -7,6 +7,10 @@
  * Commands, ASCII, one per line, at 115200 baud:
  *   HELLO                         -> READY,1 (only while idle)
  *   CONFIG n cue_delay_ms cue_ms reward_at_ms post_reward_ms valve_ms initial_iti_s
+ *   TRIGGERS cue_lead_ms reward_lead_ms pulse_ms -> TRIGGERS_OK,1
+ *     Optional after CONFIG: D7 cue, D8 rewarded trials only, active HIGH.
+ *     CONFIG disables triggers until TRIGGERS is accepted. Use 5V-to-3.3V
+ *     level conversion before pyPhotometry Digital BNC inputs; see docs.
  *   TRIAL index iti_s rewarded    -> load each index 1..n, in order
  *   START                         -> start only after every trial is loaded
  *   CUE_ON index                  -> host has displayed the cue
@@ -43,6 +47,7 @@
  * SESSION_ABORTED codes: 1 STOP; 2 host heartbeat lost; 3 cue-on ACK timeout;
  * 4 cue-off ACK timeout; 5 protocol error during session;
  * 7 reward deadline reached without a valid cue-off acknowledgement.
+ * 8 pre-event trigger was not sent before its event deadline.
  * STOP is also accepted while loading. Protocol errors during a session
  * abort and close all outputs. No blocking delays or dynamic Strings.
  */
@@ -56,6 +61,8 @@ const uint8_t PIN_VALVE = 12;
 const uint8_t PIN_LICK = 11;
 const uint8_t PIN_LED = 10;
 const uint8_t PIN_TTL = 9;
+const uint8_t PIN_CUE_TRIGGER = 7;
+const uint8_t PIN_REWARD_TRIGGER = 8;
 const uint16_t MAX_TRIALS = 200;
 const uint32_t HEARTBEAT_TIMEOUT_MS = 2000;
 // Request-to-display acknowledgement must arrive within 100 ms. Rejecting
@@ -98,6 +105,13 @@ bool discardingLine = false;
 uint16_t manualOnMs = 300;
 uint16_t manualOffMs = 100;
 bool manualValveHigh = false;
+bool triggersEnabled = false;
+uint16_t cueTriggerLeadMs = 100;
+uint16_t rewardTriggerLeadMs = 100;
+uint16_t triggerPulseMs = 20;
+bool cueTriggerSent = false, rewardTriggerSent = false;
+bool cueTriggerHigh = false, rewardTriggerHigh = false;
+uint32_t cueTriggerStartedMs = 0, rewardTriggerStartedMs = 0;
 
 void logEvent(const __FlashStringHelper *event, uint32_t value) {
   Serial.print(millis());
@@ -112,6 +126,9 @@ void safeOutputs() {
   digitalWrite(PIN_LED, LOW);
   digitalWrite(PIN_TTL, LOW);
   digitalWrite(PIN_BUZZER, LOW);
+  digitalWrite(PIN_CUE_TRIGGER, LOW);
+  digitalWrite(PIN_REWARD_TRIGGER, LOW);
+  cueTriggerHigh = rewardTriggerHigh = false;
 }
 
 void abortSession(uint8_t reason) {
@@ -165,6 +182,33 @@ void closeRewardIfDue() {
   digitalWrite(PIN_TTL, LOW);
   logEvent(F("REWARD_OFF"), trialIndex + 1);
   state = POST_REWARD;
+}
+
+void closeTriggersIfDue() {
+  uint32_t now = millis();
+  bool closeCue = cueTriggerHigh && uint32_t(now - cueTriggerStartedMs) >= triggerPulseMs;
+  bool closeReward = rewardTriggerHigh && uint32_t(now - rewardTriggerStartedMs) >= triggerPulseMs;
+  // Lower both outputs before writing potentially blocking serial records.
+  if (closeCue) { digitalWrite(PIN_CUE_TRIGGER, LOW); cueTriggerHigh = false; }
+  if (closeReward) { digitalWrite(PIN_REWARD_TRIGGER, LOW); rewardTriggerHigh = false; }
+  if (closeCue) logEvent(F("CUE_TRIGGER_OFF"), trialIndex + 1);
+  if (closeReward) logEvent(F("REWARD_TRIGGER_OFF"), trialIndex + 1);
+}
+
+bool sendTriggerIfDue(bool cue, uint32_t now) {
+  bool &sent = cue ? cueTriggerSent : rewardTriggerSent;
+  uint16_t eventAt = cue ? cueDelayMs : rewardAtMs;
+  uint16_t lead = cue ? cueTriggerLeadMs : rewardTriggerLeadMs;
+  uint32_t elapsed = now - trialStartedMs;
+  if (!triggersEnabled || sent || elapsed < uint32_t(eventAt - lead)) return true;
+  // Do not manufacture a pre-event marker at/after its event on a stalled loop.
+  if (lead > 0 && elapsed >= eventAt) { abortSession(8); return false; }
+  digitalWrite(cue ? PIN_CUE_TRIGGER : PIN_REWARD_TRIGGER, HIGH);
+  sent = true;
+  if (cue) { cueTriggerHigh = true; cueTriggerStartedMs = now; }
+  else { rewardTriggerHigh = true; rewardTriggerStartedMs = now; }
+  logEvent(cue ? F("CUE_TRIGGER_ON") : F("REWARD_TRIGGER_ON"), trialIndex + 1);
+  return true;
 }
 
 // Decimal-only parser: no negative numbers, implicit bases, overflow, or junk.
@@ -242,8 +286,21 @@ void handleLine() {
     initialITISeconds = values[6];
     loadedTrials = 0;
     memset(rewardBits, 0, sizeof(rewardBits));
+    triggersEnabled = false;
     configured = true;
     logEvent(F("CONFIG_OK"), totalTrials);
+  } else if (strcmp(command, "TRIGGERS") == 0) {
+    if (state != IDLE) { protocolError(3); return; }
+    if (!readNumbers(remaining, values, 3)) { protocolError(1); return; }
+    if (!configured) { protocolError(4); return; }
+    if (values[0] > cueDelayMs ||
+        values[1] > uint32_t(rewardAtMs) - cueDelayMs - cueDurationMs ||
+        values[2] < 1 || values[2] > 1000) { protocolError(2); return; }
+    cueTriggerLeadMs = values[0];
+    rewardTriggerLeadMs = values[1];
+    triggerPulseMs = values[2];
+    triggersEnabled = true;
+    logEvent(F("TRIGGERS_OK"), 1);
   } else if (strcmp(command, "TRIAL") == 0) {
     if (state != IDLE) { protocolError(3); return; }
     if (!readNumbers(remaining, values, 3)) { protocolError(1); return; }
@@ -364,10 +421,13 @@ void runSession() {
       if (elapsed >= currentITIMs) {
         state = TRIAL_LEAD;
         stateStartedMs = trialStartedMs = now;
+        cueTriggerSent = rewardTriggerSent = false;
         logEvent(F("TRIAL_START"), trialIndex + 1);
+        if (!sendTriggerIfDue(true, now)) return;
       }
       break;
     case TRIAL_LEAD:
+      if (!sendTriggerIfDue(true, now)) return;
       if (uint32_t(now - trialStartedMs) >= cueDelayMs) {
         state = WAIT_CUE_ON;
         stateStartedMs = now;
@@ -381,6 +441,7 @@ void runSession() {
       if (elapsed >= uint32_t(cueDurationMs) + CUE_OFF_GRACE_MS) abortSession(4);
       break;
     case REWARD_DELAY:
+      if (trialRewarded() && !sendTriggerIfDue(false, now)) return;
       if (uint32_t(now - trialStartedMs) >= rewardAtMs) {
         if (trialRewarded()) {
           state = VALVE_OPEN;
@@ -396,6 +457,8 @@ void runSession() {
       break;
     case POST_REWARD:
       if (uint32_t(now - trialStartedMs) >= uint32_t(rewardAtMs) + postRewardMs) {
+        // Even an unusually long pulse must not spill into the next trial.
+        safeOutputs();
         logEvent(F("TRIAL_END"), trialIndex + 1);
         advanceTrial();
       }
@@ -413,6 +476,8 @@ void setup() {
   pinMode(PIN_LED, OUTPUT);
   pinMode(PIN_TTL, OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
+  pinMode(PIN_CUE_TRIGGER, OUTPUT);
+  pinMode(PIN_REWARD_TRIGGER, OUTPUT);
   pinMode(PIN_LICK, INPUT);
   lastLickHigh = digitalRead(PIN_LICK) == HIGH;
   lastLickMs = millis() - LICK_DEBOUNCE_MS;
@@ -422,6 +487,7 @@ void setup() {
 
 void loop() {
   closeRewardIfDue();
+  closeTriggersIfDue();
   handleSerial();
   checkLick();
   runSession();

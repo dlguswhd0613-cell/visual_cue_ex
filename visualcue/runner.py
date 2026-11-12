@@ -9,7 +9,7 @@ from pathlib import Path
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
-from .config import DEFAULT_CONFIG, configuration_command, load_config, validate_config
+from .config import DEFAULT_CONFIG, configuration_command, load_config, photometry_command, validate_config
 from .recording import SessionLog
 from .schedule import generate_schedule, load_schedule
 from .stimulus import make_gabor
@@ -135,6 +135,9 @@ class Experiment:
                 time.sleep(.01)
         self.exchange("HELLO", "READY", 1)
         self.exchange(configuration_command(self.config), "CONFIG_OK", len(self.rows))
+        trigger_command = photometry_command(self.config)
+        if trigger_command:
+            self.exchange(trigger_command, "TRIGGERS_OK", 1)
         for row in self.rows:
             self.exchange(f"TRIAL {row['Trial']} {row['ITI_Duration_S']} {row['Rewarded']}", "TRIAL_OK", row["Trial"])
         self.recording.metadata["status"] = "ready"

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from visualcue.config import configuration_command, load_config, validate_config
+from visualcue.config import configuration_command, load_config, photometry_command, validate_config
 from visualcue.recording import SessionLog
 from visualcue.runner import Experiment, parse_event
 from visualcue.schedule import generate_schedule, load_schedule, save_schedule
@@ -98,6 +98,25 @@ class TaskTests(unittest.TestCase):
         for line in ("# old sketch", "Ready. Python controls this Arduino.", "x,LICK,1", "4,LICK,1,extra"):
             with self.assertRaises(ValueError):
                 parse_event(line)
+
+    def test_photometry_defaults_and_legacy_configs(self):
+        self.assertEqual(photometry_command(self.config), "TRIGGERS 100 100 20")
+        self.config["photometry"]["enabled"] = False
+        validate_config(self.config)
+        self.assertIsNone(photometry_command(self.config))
+        del self.config["photometry"]
+        validate_config(self.config)
+        self.assertIsNone(photometry_command(self.config))
+
+    def test_invalid_photometry_timing_rejected_before_hardware(self):
+        for field, value in (("enabled", 1), ("cue_lead_ms", 1001),
+                             ("reward_lead_ms", 3001), ("cue_lead_ms", -1),
+                             ("pulse_ms", 0), ("pulse_ms", 1001), ("pulse_ms", True)):
+            with self.subTest(field=field, value=value):
+                config = load_config()
+                config["photometry"][field] = value
+                with self.assertRaises(ValueError):
+                    validate_config(config)
 
     def test_recording_labels_simulation_and_preserves_unique_sessions(self):
         rows, seed = generate_schedule(self.config["session"], 7)

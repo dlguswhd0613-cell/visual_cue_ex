@@ -31,6 +31,10 @@ class SimulatedBoard:
         self._last_ping = 0
         self._simulate_licks = simulate_licks
         self._auto_lick_at: int | None = None
+        self._triggers: tuple[int, int, int] | None = None
+        self._trigger_edges: dict[str, int] = {}
+        self.cue_trigger_on = False
+        self.reward_trigger_on = False
         self.valve_on = False
         self.closed = False
         self._emit("READY", 1)
@@ -77,6 +81,8 @@ class SimulatedBoard:
             return
         if command == "CONFIG":
             self._configure(values)
+        elif command == "TRIGGERS":
+            self._configure_triggers(values)
         elif command == "TRIAL":
             self._load_trial(values)
         elif command in ("CUE_ON", "CUE_OFF") and len(values) == 1:
@@ -103,8 +109,33 @@ class SimulatedBoard:
             self._error(2)
         else:
             self._config = values
+            self._triggers = None
             self._trials.clear()
             self._emit("CONFIG_OK", values[0])
+
+    def _configure_triggers(self, values: tuple[int, ...]) -> None:
+        if self._state != "idle":
+            self._error(3)
+        elif len(values) != 3:
+            self._error(1)
+        elif self._config is None:
+            self._error(4)
+        elif (values[0] > self._config[1]
+              or values[1] > self._config[3] - self._config[1] - self._config[2]
+              or not 1 <= values[2] <= 1000):
+            self._error(2)
+        else:
+            self._triggers = values
+            self._emit("TRIGGERS_OK", 1)
+
+    def _schedule_trigger(self, kind: str, at: int) -> None:
+        assert self._triggers is not None
+        self._trigger_edges[f"{kind}_TRIGGER_ON"] = at
+        self._trigger_edges[f"{kind}_TRIGGER_OFF"] = at + self._triggers[2]
+
+    def _clear_triggers(self) -> None:
+        self._trigger_edges.clear()
+        self.cue_trigger_on = self.reward_trigger_on = False
 
     def _load_trial(self, values: tuple[int, ...]) -> None:
         if self._state != "idle":
@@ -156,6 +187,8 @@ class SimulatedBoard:
             # Reward is anchored to TRIAL_START, while receiving this display-
             # OFF acknowledgement remains a prerequisite for opening the valve.
             self._deadline = self._trial_started + self._config[3]
+            if self._triggers is not None and self._trials[self._trial][1]:
+                self._schedule_trigger("REWARD", max(self._now(), self._deadline - self._triggers[1]))
 
     def _start_iti(self, at: int) -> None:
         assert self._config is not None
@@ -167,6 +200,7 @@ class SimulatedBoard:
 
     def _finish_trial(self, at: int) -> None:
         assert self._config is not None
+        self._clear_triggers()
         self._emit("TRIAL_END", self._trial, at)
         if self._trial == self._config[0]:
             self._state = "idle"
@@ -191,9 +225,20 @@ class SimulatedBoard:
         while True:
             pending = [when for when in (self._deadline, self._auto_lick_at)
                        if when is not None]
+            pending.extend(self._trigger_edges.values())
             if not pending or min(pending) > now:
                 break
             at = min(pending)
+            edges = [name for name, when in self._trigger_edges.items() if when == at]
+            if edges:
+                for name in edges:
+                    del self._trigger_edges[name]
+                    if name.startswith("CUE_"):
+                        self.cue_trigger_on = name.endswith("_ON")
+                    else:
+                        self.reward_trigger_on = name.endswith("_ON")
+                    self._emit(name, self._trial, at)
+                continue
             if self._auto_lick_at == at:
                 self._lick_count += 1
                 self._emit("LICK", self._lick_count, at)
@@ -217,6 +262,8 @@ class SimulatedBoard:
                 self._emit("TRIAL_START", self._trial, at)
                 self._state = "cue_lead"
                 self._deadline = at + self._config[1]
+                if self._triggers is not None:
+                    self._schedule_trigger("CUE", self._deadline - self._triggers[0])
             elif self._state == "cue_lead":
                 self._emit("CUE_REQUEST", self._trial, at)
                 self._state = "cue_requested"
@@ -249,6 +296,8 @@ class SimulatedBoard:
 
     def _stop(self, reason: int = 1) -> None:
         self.valve_on = False
+        self._clear_triggers()
+        self._triggers = None
         self._state = "idle"
         self._deadline = None
         self._auto_lick_at = None

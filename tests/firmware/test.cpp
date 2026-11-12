@@ -34,7 +34,13 @@ void until(SessionState target) {
 }
 void toCue() {until(WAIT_CUE_ON); command("CUE_ON 1");}
 void toReward() {toCue();tick(2000);command("CUE_OFF 1");until(VALVE_OPEN);}
-void assertSafe(){assert(pins[12]==0 && pins[9]==0 && pins[10]==0 && pins[6]==0);}
+void assertSafe(){assert(pins[12]==0 && pins[9]==0 && pins[10]==0 && pins[6]==0 && pins[7]==0 && pins[8]==0);}
+void configureTriggers(bool rewarded=true, unsigned count=1, unsigned lead=100, unsigned width=20) {
+ command("CONFIG "+std::to_string(count)+" 1000 2000 6000 4000 30 0");
+ command("TRIGGERS "+std::to_string(lead)+" "+std::to_string(lead)+" "+std::to_string(width));
+ for(unsigned i=1;i<=count;i++)command("TRIAL "+std::to_string(i)+" 0 "+std::to_string(rewarded));
+ command("START");
+}
 int main() {
  setup(); assert(has("0,READY,1\n")); assertSafe();
  command("START"); assert(has(",ERROR,4\n")); assert(state==IDLE);
@@ -138,4 +144,65 @@ int main() {
  assert(state==IDLE);assert(cueCount==100);assert(lickCount==0);assert(fakeNow-sessionStart==4660000);
  assert(has(",REWARD_ON,100\n") && has(",TRIAL_END,100\n") && has(",SESSION_END,100\n"));assertSafe();
  std::cout<<"PASS full100-trial no-lick session finishes in4660s with90s initialITI/33s ITIs\n";
+ reset();configureTriggers(true,2);
+ tick(2999);assert(pins[7]==LOW && pins[8]==LOW);until(TRIAL_LEAD);
+ for(unsigned trial=1;trial<=2;trial++) {
+  auto start=trialStartedMs;
+  tick(899);assert(pins[7]==LOW && pins[8]==LOW);
+  tick(1);assert(pins[7]==HIGH && pins[8]==LOW && pins[12]==LOW);
+  assert(has(std::to_string(uint32_t(start+900))+",CUE_TRIGGER_ON,"+std::to_string(trial)+"\n"));
+  tick(19);assert(pins[7]==HIGH);tick(1);assert(pins[7]==LOW);
+  tick(80);assert(state==WAIT_CUE_ON);
+  command("CUE_ON "+std::to_string(trial));tick(2000);command("CUE_OFF "+std::to_string(trial));
+  tick(2899);assert(pins[8]==LOW);tick(1);assert(pins[8]==HIGH && pins[12]==LOW);
+  assert(has(std::to_string(uint32_t(start+5900))+",REWARD_TRIGGER_ON,"+std::to_string(trial)+"\n"));
+  tick(19);assert(pins[8]==HIGH);tick(1);assert(pins[8]==LOW);
+  tick(80);assert(state==VALVE_OPEN && pins[12]==HIGH);assert(fakeNow-start==6000);
+  tick(4000);assertSafe();
+  if(trial==1)until(TRIAL_LEAD);
+ }
+ assert(state==IDLE);
+ std::cout<<"PASS separate D7/D8 pulses100ms before cue/reward,20ms wide, reset each trial\n";
+ reset();configureTriggers(false);toCue();tick(2000);command("CUE_OFF 1");until(IDLE);
+ assert(has(",CUE_TRIGGER_ON,1\n"));assert(!has(",REWARD_TRIGGER_ON,"));assertSafe();
+ reset();configure();toReward();tick(4000);assert(!has("TRIGGER_ON"));assertSafe();
+ reset();command("VALVE_HOLD");tick(3000);command("STOP");assert(!has("TRIGGER_ON"));assertSafe();
+ std::cout<<"PASS no reward trigger for omission; legacy CONFIG and manual valve have no triggers\n";
+ for(bool reward : {false,true}) {
+  reset();configureTriggers();until(TRIAL_LEAD);
+  if(reward) {toCue();tick(2000);command("CUE_OFF 1");tick(2900);} else tick(900);
+  assert(pins[reward?8:7]==HIGH);command("STOP");assertSafe();tick(10000);assertSafe();
+  assert(!has(",REWARD_ON,"));
+ }
+ reset();configureTriggers();until(TRIAL_LEAD);tick(900);lastHeartbeatMs=fakeNow-2000;
+ loop();assert(state==IDLE);assertSafe();assert(has(",SESSION_ABORTED,2\n"));
+ reset();configureTriggers();until(TRIAL_LEAD);tick(900);command("BAD");assertSafe();assert(state==IDLE);
+ std::cout<<"PASS STOP, watchdog and protocol error clear active trigger outputs\n";
+ reset();command("TRIGGERS 100 100 20");assert(has(",ERROR,4\n"));
+ command("CONFIG 1 1000 2000 6000 4000 30 0");
+ for(const std::string args : {"1001 100 20", "100 3001 20", "100 100 0", "100 100 1001", "-1 100 20"}) {
+  command("TRIGGERS "+args);assert(!triggersEnabled);
+ }
+ command("TRIGGERS 100 100 20");assert(triggersEnabled);
+ command("CONFIG 1 1000 2000 6000 4000 30 0");assert(!triggersEnabled);
+ reset();configureTriggers();until(TRIAL_LEAD);fakeNow+=1000;command("PING");
+ assert(state==IDLE);assert(has(",SESSION_ABORTED,8\n"));assert(!has(",CUE_REQUEST,"));assertSafe();
+ reset();configureTriggers();toCue();tick(2000);command("CUE_OFF 1");tick(2800);
+ fakeNow+=200;command("PING");assert(state==IDLE);assert(has(",SESSION_ABORTED,8\n"));
+ assert(!has(",REWARD_ON,"));assertSafe();
+ std::cout<<"PASS trigger bounds, CONFIG resets enable, missed pre-event markers abort\n";
+ reset();fakeNow=UINT32_MAX-3909;configureTriggers();until(TRIAL_LEAD);tick(900);
+ assert(pins[7]==HIGH);tick(20);assert(pins[7]==LOW);until(WAIT_CUE_ON);
+ command("CUE_ON 1");tick(2000);command("CUE_OFF 1");tick(2900);
+ assert(pins[8]==HIGH);tick(20);assert(pins[8]==LOW);until(IDLE);assertSafe();
+ reset();configureTriggers(true,1,0);toCue();assert(pins[7]==HIGH);
+ tick(2000);command("CUE_OFF 1");until(VALVE_OPEN);assert(pins[8]==HIGH);
+ assert(Serial.output.find(",REWARD_TRIGGER_ON,") < Serial.output.find(",REWARD_ON,"));
+ tick(4000);assertSafe();
+ std::cout<<"PASS trigger pulse expiry across millis rollover and zero-lead event ordering\n";
+ reset();command("CONFIG 2 1000 2000 6000 30 30 0");command("TRIGGERS 100 100 1000");
+ command("TRIAL 1 0 1");command("TRIAL 2 0 1");command("START");toReward();
+ assert(pins[8]==HIGH);tick(30);assert(state==ITI);assertSafe();
+ until(TRIAL_LEAD);assertSafe();command("STOP");
+ std::cout<<"PASS trial end truncates long trigger pulses before the next trial\n";
 }

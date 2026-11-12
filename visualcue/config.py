@@ -24,8 +24,11 @@ def validate_config(config):
         "stimulus": {"diameter_px", "cycles_per_patch", "orientation_deg", "contrast",
                      "sigma_fraction", "phase_deg"},
     }
-    if not isinstance(config, dict) or set(config) != set(expected):
-        raise ValueError("Config requires exactly serial, session, display, stimulus sections")
+    if (not isinstance(config, dict) or not set(expected) <= set(config)
+            or set(config) - set(expected) - {"photometry"}):
+        raise ValueError("Config requires serial, session, display, stimulus; optional photometry")
+    if "photometry" in config:
+        expected["photometry"] = {"enabled", "cue_lead_ms", "reward_lead_ms", "pulse_ms"}
     for section, keys in expected.items():
         optional = {"iti_distribution", "iti_exponential_scale_s"} if section == "session" else set()
         if (not isinstance(config[section], dict) or not keys <= set(config[section])
@@ -54,6 +57,14 @@ def validate_config(config):
         raise ValueError("reward_at_ms must be after cue_delay_ms + cue_duration_ms")
     if session["post_reward_ms"] < session["valve_open_ms"]:
         raise ValueError("post_reward_ms must be >= valve_open_ms")
+    if "photometry" in config:
+        p = config["photometry"]
+        if type(p["enabled"]) is not bool:
+            raise ValueError("photometry.enabled must be true or false")
+        integer("photometry", "cue_lead_ms", 0, session["cue_delay_ms"])
+        integer("photometry", "reward_lead_ms", 0,
+                session["reward_at_ms"] - session["cue_delay_ms"] - session["cue_duration_ms"])
+        integer("photometry", "pulse_ms", 1, 1000)
     if session["iti_max_s"] < session["iti_min_s"]:
         raise ValueError("iti_max_s must be >= iti_min_s")
     if session["seed"] is not None and type(session["seed"]) is not int:
@@ -84,3 +95,10 @@ def configuration_command(config):
     s = config["session"]
     return "CONFIG {} {} {} {} {} {} {}".format(s["trials"], s["cue_delay_ms"],
         s["cue_duration_ms"], s["reward_at_ms"], s["post_reward_ms"], s["valve_open_ms"], s["initial_iti_s"])
+
+
+def photometry_command(config):
+    p = config.get("photometry", {})
+    if not p.get("enabled", False):
+        return None
+    return "TRIGGERS {} {} {}".format(p["cue_lead_ms"], p["reward_lead_ms"], p["pulse_ms"])

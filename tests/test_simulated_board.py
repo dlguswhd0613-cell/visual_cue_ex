@@ -39,8 +39,10 @@ class SimulatedBoardTests(unittest.TestCase):
     def matching(self, name):
         return [event for event in self.events if event[1] == name]
 
-    def start(self, count=1, rewarded=True, reward_at=9000):
+    def start(self, count=1, rewarded=True, reward_at=9000, triggers=False):
         self.send(f"CONFIG {count} 1000 2000 {reward_at} 4000 30 0")
+        if triggers:
+            self.send("TRIGGERS 100 100 20")
         for index in range(1, count + 1):
             self.send(f"TRIAL {index} 33 {int(rewarded)}")
         self.send("START")
@@ -62,6 +64,70 @@ class SimulatedBoardTests(unittest.TestCase):
         self.assertEqual(self.matching("LED_OFF"), [
             (1000, "LED_OFF", 1), (2000, "LED_OFF", 2), (3000, "LED_OFF", 3),
         ])
+
+    def test_photometry_pulses_precede_events_and_repeat_on_next_trial(self):
+        self.start(count=2, triggers=True)
+        self.finish_cue()
+        self.advance(5900)
+        self.assertTrue(self.board.reward_trigger_on)
+        self.assertFalse(self.board.valve_on)
+        self.advance(20)
+        self.assertFalse(self.board.reward_trigger_on)
+        self.advance(80)
+        self.assertTrue(self.board.valve_on)
+        self.assertEqual(self.matching("CUE_TRIGGER_ON"), [(3900, "CUE_TRIGGER_ON", 1)])
+        self.assertEqual(self.matching("CUE_TRIGGER_OFF"), [(3920, "CUE_TRIGGER_OFF", 1)])
+        self.assertEqual(self.matching("REWARD_TRIGGER_ON"), [(11900, "REWARD_TRIGGER_ON", 1)])
+        self.assertEqual(self.matching("REWARD_TRIGGER_OFF"), [(11920, "REWARD_TRIGGER_OFF", 1)])
+        self.advance(37900)
+        self.assertEqual(self.matching("CUE_TRIGGER_ON")[-1], (49900, "CUE_TRIGGER_ON", 2))
+
+    def test_stop_clears_active_trigger_and_cancels_future_reward_trigger(self):
+        self.start(triggers=True)
+        self.advance(900)
+        self.assertTrue(self.board.cue_trigger_on)
+        self.send("STOP")
+        self.assertFalse(self.board.cue_trigger_on)
+        self.assertFalse(self.board.reward_trigger_on)
+        self.advance(20000)
+        self.assertFalse(self.matching("REWARD_TRIGGER_ON"))
+        self.assertFalse(self.matching("REWARD_ON"))
+
+    def test_long_pulse_is_cleared_at_trial_end(self):
+        self.send("CONFIG 2 1000 2000 6000 30 30 0")
+        self.send("TRIGGERS 100 100 1000")
+        self.send("TRIAL 1 0 1")
+        self.send("TRIAL 2 0 1")
+        self.send("START")
+        self.advance(3000)
+        self.finish_cue()
+        self.advance(3000)
+        self.assertTrue(self.board.reward_trigger_on)
+        self.advance(30)
+        self.assertFalse(self.board.reward_trigger_on)
+        self.assertEqual(len(self.matching("TRIAL_START")), 2)
+
+    def test_no_reward_trigger_for_omitted_reward(self):
+        self.start(rewarded=False, triggers=True)
+        self.finish_cue()
+        self.advance(10000)
+        self.assertTrue(self.matching("CUE_TRIGGER_ON"))
+        self.assertFalse(self.matching("REWARD_TRIGGER_ON"))
+
+    def test_trigger_config_requires_valid_session_and_resets_with_config(self):
+        self.send("TRIGGERS 100 100 20")
+        self.assertEqual(self.matching("ERROR")[-1][2], 4)
+        self.send("CONFIG 1 1000 2000 9000 4000 30 0")
+        for args in ("1001 100 20", "100 6001 20", "100 100 0", "100 100 1001"):
+            self.send("TRIGGERS " + args)
+            self.assertEqual(self.matching("ERROR")[-1][2], 2)
+        self.send("TRIGGERS 100 100 20")
+        self.assertEqual(self.matching("TRIGGERS_OK")[-1][2], 1)
+        self.start()  # New CONFIG clears the earlier trigger settings.
+        self.finish_cue()
+        self.advance(10000)
+        self.assertFalse(self.matching("CUE_TRIGGER_ON"))
+        self.assertFalse(self.matching("REWARD_TRIGGER_ON"))
 
     def test_reward_is_at_trial_second_nine_despite_small_display_latency(self):
         self.start()
