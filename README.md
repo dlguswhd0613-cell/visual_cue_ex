@@ -98,11 +98,11 @@ python HEADFIXED_PYTHON.py --config config/experiment.json --port /dev/ttyACM0 -
 | `stimulus` 설정 | 기본값 | 의미 |
 |---|---:|---|
 | `diameter_px` | 276 | 원형 패치 지름, 화면 픽셀 단위 |
-| `cycles_per_patch` | 4 | 패치 지름 안의 흑백 줄무늬 주기 수 (아래 화면 가정에서 약 0.267 cycle/degree) |
+| `cycles_per_patch` | 6 | 패치 지름 안의 흑백 줄무늬 주기 수 (아래 화면 가정에서 약 0.4 cycle/degree) |
 | `orientation_deg` | 45 | 0도는 세로 줄무늬 |
 | `contrast` | 1.0 | 대비, 0은 배경만 보이고 1은 최대 |
 | `sigma_fraction` | 0.29578217 | Gaussian 표준편차를 패치 지름으로 나눈 값 (아래 화면 가정에서 FWHM 약 10.5°) |
-| `phase_deg` | 90 | 줄무늬의 시작 위치 |
+| `phase_deg` | 0 | 줄무늬의 시작 위치 |
 
 검은 줄 하나와 흰 줄 하나가 한 주기입니다. 지름이 240px일 때 6주기는 한 주기당 40px입니다. `cycles_per_patch`를 12로 바꾸면 줄무늬가 두 배 촘촘해집니다. 패치 크기를 바꿔도 줄무늬 간격을 유지하려면 주기 수도 같은 비율로 바꾸세요. 예를 들어 **240px·6주기 → 360px·9주기**입니다.
 
@@ -110,7 +110,7 @@ python HEADFIXED_PYTHON.py --config config/experiment.json --port /dev/ttyACM0 -
 
 현재 지름 276px은 7인치 대각선·800×480 해상도·정사각형 픽셀을 가정한 근삿값입니다. 눈이 패치 중심을 정면으로 바라보고 중심까지 거리가 20cm라면, 지름 시야각 15°에 필요한 물리적 크기는 `2 × 20 × tan(7.5°) ≈ 5.27cm`입니다. 위 가정에서 화면 가로는 약 15.25cm이고, 필요한 지름 약 276.32px을 정수 276px로 반올림했습니다. 실제 표시 영역 치수나 픽셀 종횡비가 다르면 다시 보정해야 합니다. 15°는 원형 패치 경계의 지름 기준이며 Gaussian으로 희미해지는 무늬의 가시 범위와는 다릅니다. 화면 정중앙에 배치하며, 800×480 화면에서 중심은 (400, 240)입니다.
 
-이 화면 가정과 거리 20cm에서 `cycles_per_patch = 4`는 약 15° 지름에 네 주기, 즉 평균 약 0.267 cycle/degree에 해당합니다. `sigma_fraction = 0.29578217`을 유지하므로 지름 276px에서 `sigma ≈ 81.64px`입니다. Gaussian의 `FWHM = 2 × sqrt(2 × ln(2)) × sigma`에 따라 반치전폭은 약 192.24px, 시야각 약 10.5°입니다. FWHM은 줄무늬 자체의 밝기 폭이 아닌 Gaussian 대비 포락선의 반치전폭입니다. 바깥쪽 경계의 taper는 반치점 밖에서 적용됩니다. 물리적 화면 치수나 거리를 바꾸면 다시 보정해야 합니다.
+이 화면 가정과 거리 20cm에서 `cycles_per_patch = 6`은 약 15° 지름에 여섯 주기, 즉 평균 약 0.4 cycle/degree에 해당합니다. `sigma_fraction = 0.29578217`을 유지하므로 지름 276px에서 `sigma ≈ 81.64px`입니다. Gaussian의 `FWHM = 2 × sqrt(2 × ln(2)) × sigma`에 따라 반치전폭은 약 192.24px, 시야각 약 10.5°입니다. FWHM은 줄무늬 자체의 밝기 폭이 아닌 Gaussian 대비 포락선의 반치전폭입니다. 바깥쪽 경계의 taper는 반치점 밖에서 적용됩니다. 물리적 화면 치수나 거리를 바꾸면 다시 보정해야 합니다.
 
 `display.background_gray`의 기본값은 128이며 범위는 0–255입니다. 전체 화면 모드에서는 실제 화면 크기를 사용합니다. `window_width`, `window_height`는 창 모드에서의 크기이며, 패치는 화면에 들어가는 크기로 설정해야 합니다.
 
