@@ -166,27 +166,6 @@ class TaskTests(unittest.TestCase):
             app.read_events()
         self.assertEqual(recorded, ["ERROR", "SESSION_ABORTED", "LICK"])
 
-    def test_session_limit_restores_gray_and_records_reason_and_completed_count(self):
-        from types import SimpleNamespace
-        from unittest.mock import Mock, patch
-        app = Experiment.__new__(Experiment)
-        app.cue_on_ns = 123
-        app.active = True
-        app.done = False
-        app.show_gray = Mock()
-        app.recording = SimpleNamespace(metadata={}, save_metadata=Mock())
-        with patch("builtins.print") as output:
-            app.handle_event("SESSION_TIME_LIMIT", 42)
-            self.assertFalse(app.active)
-            self.assertIsNone(app.cue_on_ns)
-            app.show_gray.assert_called()
-            app.handle_event("SESSION_END", 42)
-            self.assertTrue(app.done)
-            self.assertEqual(app.recording.metadata,
-                             {"status": "completed", "end_reason": "time_limit", "completed_trials": 42})
-            app.recording.save_metadata.assert_called()
-            self.assertTrue(all(c.kwargs.get("flush") for c in output.call_args_list))
-
 
 if __name__ == "__main__":
     unittest.main()

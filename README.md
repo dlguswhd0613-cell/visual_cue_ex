@@ -30,9 +30,11 @@ Lick은 D11의 LOW→HIGH 전환으로 감지하고, 직전 감지 이후 50ms �
 
 ITI 시작 시 터미널에는 `ITI_START: 2`(다음 시행 번호), `ITI_DURATION_S: 12s`(해당 ITI 길이)처럼 표시됩니다.
 
-**1시간은 Arduino의 `SESSION_START`부터 계산하며 시작 표시 3초와 최초 ITI 90초도 포함합니다.** 1시간에 도달하면 현재 trial/lick/ITI 대기를 마저 기다리지 않고 밸브·TTL·LED 출력을 LOW로 내리고 화면을 회색으로 복귀시킵니다. `SESSION_TIME_LIMIT`와 `SESSION_END`의 값은 완료한 trial 수입니다. 진행 중이던 미완료 trial에는 `TRIAL_END`를 만들지 않습니다. `events.csv`에 종료 이벤트를 저장하고, `metadata.json`에는 `status: completed`, `end_reason: time_limit`, `completed_trials`, `session_limit_s: 3600`을 저장합니다. 100회를 먼저 완료한 경우 `end_reason`은 `trial_count`입니다. `--exit-when-done`을 사용하면 시간 제한 종료 후에도 프로그램이 종료됩니다. TTL 단독 시험과 priming에는 이 세션 제한을 적용하지 않습니다.
+**1시간은 Python이 `START`를 보내는 시점부터 계산하며 시작 표시 3초와 최초 ITI 90초도 포함합니다.** Python이 3600초를 확인하면 진행 중인 trial/lick/ITI 대기를 중지하는 기존 `STOP` 명령을 보내고 화면을 회색으로 복귀시킵니다. Arduino는 `STOP`을 받아 밸브·TTL·LED를 LOW로 내리고 `SESSION_ABORTED,1`로 응답합니다. Python은 이 응답을 확인한 뒤 시간 제한에 따른 정상 완료로 저장합니다. 응답이 2초 내에 오지 않으면 실패로 기록합니다.
 
-이 동작을 사용하려면 **Pi의 Python과 Uno 스케치를 함께 업데이트하고 Uno에 다시 업로드**해야 합니다. Python은 `LICK_END_CAPS`와 `SESSION_LIMIT_CAPS,3600` 응답을 확인해 lick 종료와 1시간 제한을 지원하는 펌웨어에서만 세션을 시작합니다. `metadata.json`의 `trial_end_rule`에도 종료 조건이 저장됩니다.
+`events.csv`에는 Python의 `SESSION_TIME_LIMIT,3600`, Arduino의 원래 정지 응답, Python의 `SESSION_END,<완료 trial 수>`가 남습니다. 미완료 trial에는 `TRIAL_END`를 만들지 않습니다. `metadata.json`에는 `status: completed`, `end_reason: time_limit`, `completed_trials`, `session_limit_s: 3600`, `session_limit_controller: python`을 저장합니다. 100회를 먼저 완료하면 `end_reason`은 `trial_count`입니다. `--exit-when-done`을 사용하면 정지 확인 후 프로그램도 종료됩니다. TTL 단독 시험과 priming에는 이 제한을 적용하지 않습니다.
+
+**1시간 제한은 Python만 업데이트하면 됩니다.** Arduino 스케치는 1시간 제한을 추가하기 전의 보상 후 lick 종료 버전(`771cc24`)으로 복원했으며, `SESSION_LIMIT_CAPS` 명령은 보내지 않습니다. 이미 이 lick 종료 버전을 사용 중이라면 Arduino 재업로드가 필요 없습니다. Python은 기존 `LICK_END_CAPS` 확인을 유지하므로, 그보다 오래된 고정 시간 종료 펌웨어는 lick 종료 버전으로 업데이트해야 합니다. `metadata.json`의 `trial_end_rule`에도 trial 종료 조건이 저장됩니다.
 
 자극 무늬의 예시입니다. 현재 실행 시 위치는 화면 정중앙입니다. 실제 픽셀 크기는 `diameter_px` 설정으로 바뀝니다.
 

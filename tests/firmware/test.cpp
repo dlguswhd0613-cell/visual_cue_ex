@@ -138,16 +138,16 @@ int main() {
  reset();fakeNow=UINT32_MAX-50;command("VALVE_PULSE 300 100");tick(300);assert(pins[12]==LOW);
  tick(100);assert(pins[12]==HIGH);command("STOP");assertSafe();
  std::cout<<"PASS manual pulse timing across millis rollover\n";
- reset();configure(100,20,90);auto sessionStart=fakeNow;unsigned cueCount=0;
+ reset();configure(100,33,90);auto sessionStart=fakeNow;unsigned cueCount=0;
  while(state!=IDLE && uint32_t(fakeNow-sessionStart)<5000000) {
   if(state==WAIT_CUE_ON) {command("CUE_ON "+std::to_string(trialIndex+1));++cueCount;}
   if(state==CUE_VISIBLE && uint32_t(fakeNow-stateStartedMs)>=cueDurationMs)command("CUE_OFF "+std::to_string(trialIndex+1));
   if(state==WAIT_REWARD_LICK) lick();
   if(state!=IDLE) tick(1);
  }
- assert(state==IDLE);assert(cueCount==100);assert(lickCount==100);assert(fakeNow-sessionStart==2976000);
+ assert(state==IDLE);assert(cueCount==100);assert(lickCount==100);assert(fakeNow-sessionStart==4263000);
  assert(has(",REWARD_ON,100\n") && has(",TRIAL_END,100\n") && has(",SESSION_END,100\n"));assertSafe();
- std::cout<<"PASS full100-trial session with100 post-reward licks and20s ITIs finishes in2976s\n";
+ std::cout<<"PASS full100-trial session with100 post-reward licks and33s ITIs finishes in4263s\n";
  reset();configureTriggers(true,2);
  tick(2999);assert(pins[7]==LOW && pins[8]==LOW);until(TRIAL_LEAD);
  for(unsigned trial=1;trial<=2;trial++) {
@@ -262,44 +262,7 @@ int main() {
   if(watchdog) tick(2000,false);else command("STOP");
   assert(state==IDLE);assertSafe();assert(!has(",TRIAL_END,"));
  }
- reset();fakeNow=UINT32_MAX-12036;configure();toReward();tick(30);command("PING");
+ reset();configure();toReward();tick(30);fakeNow=UINT32_MAX-5;command("PING");
  tick(10);lick();assert(state==IDLE);assertSafe();
  std::cout<<"PASS STOP/watchdog while waiting and lick accepted across millis rollover\n";
- reset();command("SESSION_LIMIT_CAPS");assert(has(",SESSION_LIMIT_CAPS,3600\n"));
- for(SessionState target : {START_MARKER, ITI, TRIAL_LEAD, WAIT_CUE_ON, CUE_VISIBLE,
-                            REWARD_DELAY, VALVE_OPEN, WAIT_REWARD_LICK, POST_REWARD}) {
-  reset();
-  command("CONFIG 2 1000 2000 6000 4000 30 1");
-  command(std::string("TRIAL 1 0 ")+(target==POST_REWARD?"0":"1"));
-  command("TRIAL 2 10 1");command("START");
-  if(target==ITI || target==TRIAL_LEAD || target==WAIT_CUE_ON) until(target);
-  else if(target!=START_MARKER) {
-   toCue();
-   if(target!=CUE_VISIBLE) {tick(2000);command("CUE_OFF 1");}
-   if(target==VALVE_OPEN || target==WAIT_REWARD_LICK || target==POST_REWARD) until(target);
-  }
-  assert(state==target);
-  sessionStartedMs=fakeNow-(SESSION_LIMIT_MS-1);
-  command("PING");assert(state==target);Serial.output.clear();
-  tick(1);assert(state==IDLE);assertSafe();assert(!sessionRunning);
-  assert(has(",SESSION_TIME_LIMIT,0\n") && has(",SESSION_END,0\n"));
-  assert(!has(",TRIAL_END,") && !has(",REWARD_ON,"));
-  command("CUE_ON 1");command("CUE_OFF 1");assert(!has(",ERROR,"));assertSafe();
- }
- std::cout<<"PASS one-hour cutoff in every session state, partial trial excluded, late ACK ignored\n";
- reset();configure(2,10,0);auto limitStart=sessionStartedMs;toReward();tick(30);lick();
- assert(trialIndex==1);sessionStartedMs=fakeNow-(SESSION_LIMIT_MS-1);
- tick(1);assert(has(",SESSION_TIME_LIMIT,1\n") && has(",SESSION_END,1\n"));assertSafe();
- Serial.output.clear();configure(1,0,4000);limitStart=sessionStartedMs;tick(3000);assert(state==ITI);
- fakeNow=limitStart+SESSION_LIMIT_MS-1;command("PING");assert(state==ITI);
- tick(1);assert(state==IDLE);assertSafe();assert(!has(",TRIAL_START,1\n"));
- std::cout<<"PASS completed-trial count and start marker/initial ITI included in one-hour limit\n";
- reset();configureTriggers();until(TRIAL_LEAD);tick(900);assert(pins[7]==HIGH);
- sessionStartedMs=fakeNow-(SESSION_LIMIT_MS-1);tick(1);assertSafe();assert(state==IDLE);
- reset();fakeNow=UINT32_MAX-1000;configure(1,0,4000);limitStart=sessionStartedMs;tick(3000);
- fakeNow=limitStart+SESSION_LIMIT_MS-1;command("PING");assert(state==ITI);
- tick(1);assert(state==IDLE);assertSafe();assert(has(",SESSION_TIME_LIMIT,0\n"));
- reset();command("VALVE_HOLD");sessionStartedMs=fakeNow-SESSION_LIMIT_MS;
- tick(1);assert(state==MANUAL_HOLD);command("STOP");assertSafe();
- std::cout<<"PASS cutoff lowers active D7, handles rollover, and excludes manual modes\n";
 }
