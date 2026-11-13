@@ -31,6 +31,8 @@ class SimulatedBoard:
         self._last_ping = 0
         self._simulate_licks = simulate_licks
         self._auto_lick_at: int | None = None
+        self._reward_lick = False
+        self._last_lick_at = -50
         self._triggers: tuple[int, int, int] | None = None
         self._trigger_edges: dict[str, int] = {}
         self.cue_trigger_on = False
@@ -57,12 +59,12 @@ class SimulatedBoard:
         if len(line.strip()) > 95:
             self._error(5)
             return
-        if command in ("HELLO", "PING", "STOP", "START") and len(parts) == 1:
-            if command == "HELLO":
+        if command in ("HELLO", "LICK_END_CAPS", "PING", "STOP", "START") and len(parts) == 1:
+            if command in ("HELLO", "LICK_END_CAPS"):
                 if self._state != "idle":
                     self._error(3)
                 else:
-                    self._emit("READY", 1)
+                    self._emit("READY" if command == "HELLO" else "LICK_END_CAPS", 1)
             elif command == "PING":
                 self._last_ping = self._now()
                 self._emit("PONG", 1)
@@ -173,6 +175,8 @@ class SimulatedBoard:
         self._trial = 1
         self._blink = 0
         self._lick_count = 0
+        self._last_lick_at = self._now() - 50
+        self._reward_lick = False
         self._auto_lick_at = None
         self._state = "marker_off"
         self._deadline = self._now() + 500
@@ -209,6 +213,7 @@ class SimulatedBoard:
     def _finish_trial(self, at: int) -> None:
         assert self._config is not None
         self._clear_triggers(at)
+        self._auto_lick_at = None
         self._emit("TRIAL_END", self._trial, at)
         if self._trial == self._config[0]:
             self._state = "idle"
@@ -217,6 +222,24 @@ class SimulatedBoard:
         else:
             self._trial += 1
             self._start_iti(at)
+
+    def inject_lick(self) -> None:
+        """Inject a rising sensor edge in simulation; never sends a hardware command."""
+        if self.closed:
+            raise RuntimeError("Simulated board is closed")
+        self._tick()
+        self._record_lick(self._now())
+
+    def _record_lick(self, at: int) -> None:
+        if at - self._last_lick_at < 50:
+            return
+        self._last_lick_at = at
+        self._lick_count += 1
+        self._emit("LICK", self._lick_count, at)
+        if self._state in ("valve", "wait_lick"):
+            self._reward_lick = True
+            if self._state == "wait_lick":
+                self._finish_trial(at)
 
     def _tick(self) -> None:
         if self.closed:
@@ -254,9 +277,8 @@ class SimulatedBoard:
                     self._emit(name, self._trial, at)
                 continue
             if self._auto_lick_at == at:
-                self._lick_count += 1
-                self._emit("LICK", self._lick_count, at)
                 self._auto_lick_at = None
+                self._record_lick(at)
                 continue
             assert self._config is not None
             if self._state == "marker_on":
@@ -272,6 +294,7 @@ class SimulatedBoard:
                 self._state = "marker_on"
                 self._deadline = at + 500
             elif self._state == "iti":
+                self._reward_lick = False
                 self._trial_started = at
                 self._emit("TRIAL_START", self._trial, at)
                 self._state = "cue_lead"
@@ -288,6 +311,7 @@ class SimulatedBoard:
                 self._stop(4)
             elif self._state == "delay":
                 if self._trials[self._trial][1]:
+                    self._reward_lick = False
                     self.valve_on = True
                     self._emit("REWARD_ON", self._trial, at)
                     self._state = "valve"
@@ -299,10 +323,14 @@ class SimulatedBoard:
             elif self._state == "valve":
                 self.valve_on = False
                 self._emit("REWARD_OFF", self._trial, at)
-                self._state = "post_reward"
-                self._deadline = self._trial_started + self._config[3] + self._config[4]
-                if self._simulate_licks:
-                    self._auto_lick_at = at + 100
+                if self._reward_lick:
+                    self._finish_trial(at)
+                else:
+                    self._state = "wait_lick"
+                    self._deadline = None
+                    self._emit("WAIT_LICK", self._trial, at)
+                    if self._simulate_licks:
+                        self._auto_lick_at = at + 100
             elif self._state == "post_reward":
                 self._finish_trial(at)
             else:
@@ -310,6 +338,7 @@ class SimulatedBoard:
 
     def _stop(self, reason: int = 1) -> None:
         self.valve_on = False
+        self._reward_lick = False
         self._clear_triggers()
         self._triggers = None
         self._state = "idle"

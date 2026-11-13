@@ -48,3 +48,27 @@ class RemoteStartTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
             main(["--demo", "--autostart"])
         self.assertEqual(error.exception.code, 2)
+
+    def test_fixed_duration_firmware_rejected_before_start(self):
+        board = SimulatedBoard()
+        original_write = board.write_line
+        commands = []
+
+        def write(command):
+            commands.append(command)
+            if command == "LICK_END_CAPS":
+                board._emit("ERROR", 1)
+            else:
+                original_write(command)
+
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict(os.environ, {"SDL_VIDEODRIVER": "dummy"}), \
+                patch("visualcue.simulated_board.SimulatedBoard", return_value=board), \
+                patch.object(board, "write_line", side_effect=write), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            result = main(["--simulate", "--autostart", "--outdir", directory])
+        self.assertEqual(result, 1)
+        self.assertIn("LICK_END_CAPS", commands)
+        self.assertNotIn("START", commands)
+        self.assertIn("STOP", commands)

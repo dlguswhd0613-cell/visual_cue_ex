@@ -81,8 +81,8 @@ class SimulatedBoardTests(unittest.TestCase):
         self.assertEqual(self.matching("CUE_TRIGGER_OFF"), [(3920, "CUE_TRIGGER_OFF", 1)])
         self.assertEqual(self.matching("REWARD_TRIGGER_ON"), [(11900, "REWARD_TRIGGER_ON", 1)])
         self.assertEqual(self.matching("REWARD_TRIGGER_OFF"), [(11920, "REWARD_TRIGGER_OFF", 1)])
-        self.advance(37900)
-        self.assertEqual(self.matching("CUE_TRIGGER_ON")[-1], (49900, "CUE_TRIGGER_ON", 2))
+        self.advance(34030)
+        self.assertEqual(self.matching("CUE_TRIGGER_ON")[-1], (46030, "CUE_TRIGGER_ON", 2))
 
     def test_stop_clears_active_trigger_and_cancels_future_reward_trigger(self):
         self.start(triggers=True)
@@ -108,6 +108,7 @@ class SimulatedBoardTests(unittest.TestCase):
         self.advance(3000)
         self.assertTrue(self.board.reward_trigger_on)
         self.assertTrue(self.board.trigger_on)
+        self.board.inject_lick()  # Lick during the valve pulse must not truncate it.
         self.advance(30)
         self.assertFalse(self.board.reward_trigger_on)
         self.assertFalse(self.board.trigger_on)
@@ -160,10 +161,8 @@ class SimulatedBoardTests(unittest.TestCase):
         self.assertFalse(self.matching("SESSION_END"))
         self.advance(100)
         self.assertEqual(self.matching("LICK"), [(12130, "LICK", 1)])
-        self.assertFalse(self.matching("SESSION_END"))
-        self.advance(3870)
-        self.assertEqual(self.matching("TRIAL_END"), [(16000, "TRIAL_END", 1)])
-        self.assertEqual(self.matching("SESSION_END"), [(16000, "SESSION_END", 1)])
+        self.assertEqual(self.matching("TRIAL_END"), [(12130, "TRIAL_END", 1)])
+        self.assertEqual(self.matching("SESSION_END"), [(12130, "SESSION_END", 1)])
 
     def test_missing_display_off_aborts_without_reward(self):
         self.start()
@@ -219,28 +218,74 @@ class SimulatedBoardTests(unittest.TestCase):
         self.assertEqual(self.matching("SESSION_ABORTED"), [(5000, "SESSION_ABORTED", 2)])
         self.assertFalse(self.board.valve_on)
 
-    def test_33_second_interval_starts_after_13_second_trial(self):
+    def test_iti_starts_at_post_reward_lick(self):
         self.start(count=2)
         self.finish_cue()
-        self.advance(43000)
-        self.assertEqual(self.matching("TRIAL_END"), [(16000, "TRIAL_END", 1)])
-        self.assertEqual(self.matching("TRIAL_START")[-1], (49000, "TRIAL_START", 2))
-        self.assertEqual(self.matching("TRIAL_START")[1][0]
-                         - self.matching("TRIAL_START")[0][0], 46000)
+        self.advance(39130)
+        self.assertEqual(self.matching("TRIAL_END"), [(12130, "TRIAL_END", 1)])
+        self.assertEqual(self.matching("ITI_START")[-1], (12130, "ITI_START", 2))
+        self.assertEqual(self.matching("TRIAL_START")[-1], (45130, "TRIAL_START", 2))
 
-    def test_absent_lick_does_not_delay_trial_or_session_end(self):
+    def test_no_lick_waits_then_starts_iti_at_lick(self):
         self.board = SimulatedBoard(clock=self.clock, simulate_licks=False)
         self.start(count=2)
+        self.board.inject_lick()  # Pre-reward lick is ignored for trial completion.
         self.finish_cue()
         self.advance(43000)
-        self.assertFalse(self.matching("LICK"))
-        self.assertEqual(self.matching("TRIAL_START")[-1], (49000, "TRIAL_START", 2))
+        self.assertFalse(self.matching("TRIAL_END"))
+        self.assertEqual(len(self.matching("TRIAL_START")), 1)
+        self.assertFalse(self.board.valve_on)
+        self.board.inject_lick()
+        self.drain()
+        self.assertEqual(self.matching("TRIAL_END"), [(49000, "TRIAL_END", 1)])
+        self.assertEqual(self.matching("ITI_START")[-1], (49000, "ITI_START", 2))
+        self.advance(32999)
+        self.assertEqual(len(self.matching("TRIAL_START")), 1)
+        self.advance(1)
+        self.assertEqual(self.matching("TRIAL_START")[-1], (82000, "TRIAL_START", 2))
         self.advance(1000)
         self.send("CUE_ON 2")
         self.advance(2000)
         self.send("CUE_OFF 2")
         self.advance(10000)
-        self.assertEqual(self.matching("SESSION_END"), [(62000, "SESSION_END", 2)])
+        self.assertFalse(self.matching("SESSION_END"))
+        self.board.inject_lick()
+        self.drain()
+        self.assertEqual(self.matching("SESSION_END"), [(95000, "SESSION_END", 2)])
+
+    def test_lick_during_valve_waits_until_full_pulse_finishes(self):
+        self.board = SimulatedBoard(clock=self.clock, simulate_licks=False)
+        self.start()
+        self.finish_cue()
+        self.advance(6005)
+        self.board.inject_lick()
+        self.drain()
+        self.assertTrue(self.board.valve_on)
+        self.assertFalse(self.matching("TRIAL_END"))
+        self.advance(24)
+        self.assertTrue(self.board.valve_on)
+        self.advance(1)
+        self.assertFalse(self.board.valve_on)
+        self.assertEqual(self.matching("SESSION_END"), [(12030, "SESSION_END", 1)])
+
+    def test_wait_for_lick_stops_on_watchdog_or_operator(self):
+        for watchdog in (False, True):
+            with self.subTest(watchdog=watchdog):
+                self.setUp()
+                self.board = SimulatedBoard(clock=self.clock, simulate_licks=False)
+                self.start()
+                self.finish_cue()
+                self.advance(10000)
+                self.assertTrue(self.matching("WAIT_LICK"))
+                if watchdog:
+                    self.clock.ms += 2000
+                    self.drain()
+                else:
+                    self.send("STOP")
+                self.assertEqual(self.matching("SESSION_ABORTED")[-1][2], 2 if watchdog else 1)
+                self.assertFalse(self.board.valve_on)
+                self.assertFalse(self.board.trigger_on)
+                self.assertFalse(self.matching("TRIAL_END"))
 
     def test_nonreward_trial_still_keeps_full_observation_period(self):
         self.start(rewarded=False)

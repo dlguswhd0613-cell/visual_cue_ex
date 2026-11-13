@@ -136,6 +136,8 @@ class Experiment:
                         raise KeyboardInterrupt
                 time.sleep(.01)
         self.exchange("HELLO", "READY", 1)
+        # Reject older fixed-duration firmware before loading or starting trials.
+        self.exchange("LICK_END_CAPS", "LICK_END_CAPS", 1)
         self.exchange(configuration_command(self.config), "CONFIG_OK", len(self.rows))
         trigger_command = photometry_command(self.config)
         if trigger_command:
@@ -143,6 +145,7 @@ class Experiment:
         for row in self.rows:
             self.exchange(f"TRIAL {row['Trial']} {row['ITI_Duration_S']} {row['Rewarded']}", "TRIAL_OK", row["Trial"])
         self.recording.metadata["status"] = "ready"
+        self.recording.metadata["trial_end_rule"] = "post_reward_lick_and_valve_closed"
         self.recording.save_metadata()
         print("Ready. SPACE=start, ESC=abort to gray, Q=quit. One session per run.", flush=True)
 
@@ -191,7 +194,7 @@ class Experiment:
             raise RuntimeError("Arduino reset during session")
         elif kind == "SESSION_START":
             print(f"SESSION_START: {value}. Session started; initial marker and ITI precede the first trial.", flush=True)
-        elif kind in ("TRIAL_START", "TRIAL_END", "REWARD_ON", "LICK"):
+        elif kind in ("TRIAL_START", "TRIAL_END", "REWARD_ON", "LICK", "WAIT_LICK", "ITI_START"):
             print(f"{kind}: {value}", flush=True)
 
     def update_cue(self):

@@ -6,6 +6,7 @@
  *
  * Commands, ASCII, one per line, at 115200 baud:
  *   HELLO                         -> READY,1 (only while idle)
+ *   LICK_END_CAPS                 -> LICK_END_CAPS,1 (rewarded trials wait for lick)
  *   CONFIG n cue_delay_ms cue_ms reward_at_ms post_reward_ms valve_ms initial_iti_s
  *   TRIGGERS cue_lead_ms reward_lead_ms pulse_ms -> TRIGGERS_OK,2
  *     Optional after CONFIG: shared D7 for cue and reward, active HIGH.
@@ -34,16 +35,16 @@
  * CONFIG limits: n 1..200; cue delay 0..60000 ms; cue duration 1..60000 ms;
  * reward at 1..60000 ms, strictly greater than cue delay + cue duration;
  * post-reward recording 1..60000 ms and >= valve duration; valve 1..1000 ms;
- * initial ITI 0..65535 s. TRIAL_END occurs at reward_at + post_reward.
- * Next ITI starts at TRIAL_END, independently of licking.
+ * initial ITI 0..65535 s. Rewarded trials end once a post-reward rising lick
+ * edge has been accepted AND the valve pulse has finished. No lick timeout.
+ * Nonreward trials end at reward_at + post_reward. Next ITI starts at TRIAL_END.
  * TRIAL ITIs: 0..65535 s; rewarded: 0 or 1. First ITI uses CONFIG instead.
  * Defaults belong to the host: 100 trials, cue starts at 1000 ms for 2000 ms,
- * reward at 9000 ms, trial ends at 13000 ms, 30 ms valve,
- * 90 s initial ITI, later ITIs 33 s (46 s between trial starts).
+ * reward at 6000 ms, 30 ms valve, 90 s initial ITI, later ITIs 10..20 s.
  * Original marker: initially OFF 500 ms, then 3 ON/OFF transitions spaced
  * 500 ms; the initial ITI starts at the third OFF transition (3 s total).
  * A rising lick edge is accepted after >=50 ms since the previous lick.
- * Licks are always logged, including ITIs, but never gate trial progression.
+ * Licks are always logged, including ITIs. Pre-reward licks do not end trials.
  *
  * ERROR codes: 1 malformed/unknown command; 2 out-of-range value;
  * 3 command invalid in current state; 4 incomplete/out-of-order schedule;
@@ -78,7 +79,7 @@ const uint32_t LICK_DEBOUNCE_MS = 50;
 
 enum SessionState : uint8_t {
   IDLE, START_MARKER, ITI, TRIAL_LEAD, WAIT_CUE_ON, CUE_VISIBLE,
-  REWARD_DELAY, VALVE_OPEN, POST_REWARD, MANUAL_HOLD, MANUAL_PULSE, TTL_TEST
+  REWARD_DELAY, VALVE_OPEN, WAIT_REWARD_LICK, POST_REWARD, MANUAL_HOLD, MANUAL_PULSE, TTL_TEST
 };
 
 SessionState state = IDLE;
@@ -101,6 +102,7 @@ uint32_t lastLickMs = 0;
 uint32_t lickCount = 0;
 bool configured = false;
 bool lastLickHigh = false;
+bool rewardLickSatisfied = false;
 bool markerOn = false;
 uint8_t completedBlinks = 0;
 char lineBuffer[96];
@@ -142,6 +144,7 @@ void abortSession(uint8_t reason) {
   bool manual = state == MANUAL_HOLD || state == MANUAL_PULSE;
   safeOutputs();
   manualValveHigh = false;
+  rewardLickSatisfied = false;
   state = IDLE;
   configured = false;
   loadedTrials = 0;
@@ -188,7 +191,14 @@ void closeRewardIfDue() {
   digitalWrite(PIN_VALVE, LOW);
   digitalWrite(PIN_TTL, LOW);
   logEvent(F("REWARD_OFF"), trialIndex + 1);
-  state = POST_REWARD;
+  state = WAIT_REWARD_LICK;
+  if (!rewardLickSatisfied) logEvent(F("WAIT_LICK"), trialIndex + 1);
+}
+
+void finishTrial() {
+  safeOutputs();
+  logEvent(F("TRIAL_END"), trialIndex + 1);
+  advanceTrial();
 }
 
 void closeTriggersIfDue() {
@@ -267,6 +277,10 @@ void handleLine() {
     if (!readNumbers(remaining, values, 0)) { protocolError(1); return; }
     if (state != IDLE) { protocolError(3); return; }
     logEvent(F("READY"), 1);
+  } else if (strcmp(command, "LICK_END_CAPS") == 0) {
+    if (!readNumbers(remaining, values, 0)) { protocolError(1); return; }
+    if (state != IDLE) { protocolError(3); return; }
+    logEvent(F("LICK_END_CAPS"), 1);
   } else if (strcmp(command, "TTL_CAPS") == 0) {
     if (!readNumbers(remaining, values, 0)) { protocolError(1); return; }
     if (state != IDLE) { protocolError(3); return; }
@@ -420,6 +434,7 @@ void checkLick() {
   if (high && !lastLickHigh && uint32_t(now - lastLickMs) >= LICK_DEBOUNCE_MS) {
     lastLickMs = now;
     ++lickCount;
+    if (state == VALVE_OPEN || state == WAIT_REWARD_LICK) rewardLickSatisfied = true;
     logEvent(F("LICK"), lickCount);
   }
   lastLickHigh = high;
@@ -464,6 +479,7 @@ void runSession() {
         state = TRIAL_LEAD;
         stateStartedMs = trialStartedMs = now;
         cueTriggerSent = rewardTriggerSent = false;
+        rewardLickSatisfied = false;
         logEvent(F("TRIAL_START"), trialIndex + 1);
         if (!sendTriggerIfDue(true, now)) return;
       }
@@ -486,6 +502,7 @@ void runSession() {
       if (trialRewarded() && !sendTriggerIfDue(false, now)) return;
       if (uint32_t(now - trialStartedMs) >= rewardAtMs) {
         if (trialRewarded()) {
+          rewardLickSatisfied = false;
           state = VALVE_OPEN;
           stateStartedMs = now;
           digitalWrite(PIN_VALVE, HIGH);
@@ -497,12 +514,12 @@ void runSession() {
         }
       }
       break;
-    case POST_REWARD:
+    case WAIT_REWARD_LICK:
+      if (rewardLickSatisfied) finishTrial();
+      break;
+    case POST_REWARD: // Nonreward trials retain the fixed observation period.
       if (uint32_t(now - trialStartedMs) >= uint32_t(rewardAtMs) + postRewardMs) {
-        // Even an unusually long pulse must not spill into the next trial.
-        safeOutputs();
-        logEvent(F("TRIAL_END"), trialIndex + 1);
-        advanceTrial();
+        finishTrial();
       }
       break;
     case VALVE_OPEN:
