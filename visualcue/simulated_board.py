@@ -11,6 +11,8 @@ from collections import deque
 import time
 from typing import Callable
 
+SESSION_LIMIT_MS = 3_600_000
+
 
 class SimulatedBoard:
     """Implement the same line transport interface as the USB serial peer."""
@@ -33,6 +35,9 @@ class SimulatedBoard:
         self._auto_lick_at: int | None = None
         self._reward_lick = False
         self._last_lick_at = -50
+        self._session_deadline: int | None = None
+        self._session_timed_out = False
+        self._completed_trials = 0
         self._triggers: tuple[int, int, int] | None = None
         self._trigger_edges: dict[str, int] = {}
         self.cue_trigger_on = False
@@ -59,12 +64,13 @@ class SimulatedBoard:
         if len(line.strip()) > 95:
             self._error(5)
             return
-        if command in ("HELLO", "LICK_END_CAPS", "PING", "STOP", "START") and len(parts) == 1:
-            if command in ("HELLO", "LICK_END_CAPS"):
+        if command in ("HELLO", "LICK_END_CAPS", "SESSION_LIMIT_CAPS", "PING", "STOP", "START") and len(parts) == 1:
+            if command in ("HELLO", "LICK_END_CAPS", "SESSION_LIMIT_CAPS"):
                 if self._state != "idle":
                     self._error(3)
                 else:
-                    self._emit("READY" if command == "HELLO" else "LICK_END_CAPS", 1)
+                    self._emit("READY" if command == "HELLO" else command,
+                               SESSION_LIMIT_MS // 1000 if command == "SESSION_LIMIT_CAPS" else 1)
             elif command == "PING":
                 self._last_ping = self._now()
                 self._emit("PONG", 1)
@@ -173,6 +179,9 @@ class SimulatedBoard:
             self._error(4)
             return
         self._trial = 1
+        self._completed_trials = 0
+        self._session_timed_out = False
+        self._session_deadline = self._now() + SESSION_LIMIT_MS
         self._blink = 0
         self._lick_count = 0
         self._last_lick_at = self._now() - 50
@@ -184,6 +193,8 @@ class SimulatedBoard:
         self._emit("SESSION_START", self._config[0])
 
     def _cue_ack(self, command: str, index: int) -> None:
+        if self._state == "idle" and self._session_timed_out:
+            return
         expected = "cue_requested" if command == "CUE_ON" else "cue_on"
         if self._state != expected or index != self._trial:
             self._error(6)
@@ -214,8 +225,10 @@ class SimulatedBoard:
         assert self._config is not None
         self._clear_triggers(at)
         self._auto_lick_at = None
+        self._completed_trials += 1
         self._emit("TRIAL_END", self._trial, at)
         if self._trial == self._config[0]:
+            self._session_deadline = None
             self._state = "idle"
             self._deadline = None
             self._emit("SESSION_END", self._trial, at)
@@ -245,21 +258,35 @@ class SimulatedBoard:
         if self.closed:
             return
         now = self._now()
-        if self._state != "idle" and now - self._last_ping >= 2000:
+        limit_due = self._session_deadline is not None and now >= self._session_deadline
+        if not limit_due and self._state != "idle" and now - self._last_ping >= 2000:
             self._stop(2)
             return
-        if self._state in ("cue_requested", "cue_on"):
+        if not limit_due and self._state in ("cue_requested", "cue_on"):
             assert self._config is not None
             if now >= self._trial_started + self._config[3]:
                 self._stop(7)
                 return
         while True:
-            pending = [when for when in (self._deadline, self._auto_lick_at)
+            pending = [when for when in (self._deadline, self._auto_lick_at, self._session_deadline)
                        if when is not None]
             pending.extend(self._trigger_edges.values())
             if not pending or min(pending) > now:
                 break
             at = min(pending)
+            if at == self._session_deadline:
+                self.valve_on = False
+                self._clear_triggers(at)
+                self._session_deadline = None
+                self._session_timed_out = True
+                self._state = "idle"
+                self._deadline = self._auto_lick_at = None
+                self._config = None
+                self._trials.clear()
+                self._reward_lick = False
+                self._emit("SESSION_TIME_LIMIT", self._completed_trials, at)
+                self._emit("SESSION_END", self._completed_trials, at)
+                return
             edges = [name for name, when in self._trigger_edges.items() if when == at]
             if edges:
                 for name in edges:
@@ -338,6 +365,7 @@ class SimulatedBoard:
 
     def _stop(self, reason: int = 1) -> None:
         self.valve_on = False
+        self._session_deadline = None
         self._reward_lick = False
         self._clear_triggers()
         self._triggers = None

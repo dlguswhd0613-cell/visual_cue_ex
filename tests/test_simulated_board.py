@@ -325,6 +325,63 @@ class SimulatedBoardTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.board.write_line("START")
 
+    def test_one_hour_includes_initial_iti_and_ends_without_trials(self):
+        self.send("SESSION_LIMIT_CAPS")
+        self.assertEqual(self.matching("SESSION_LIMIT_CAPS")[-1][2], 3600)
+        self.send("CONFIG 100 1000 2000 6000 4000 30 4000")
+        for index in range(1, 101):
+            self.send(f"TRIAL {index} 10 1")
+        self.send("START")
+        self.advance(3_599_999)
+        self.assertFalse(self.matching("SESSION_END"))
+        self.advance(1)
+        self.assertEqual(self.matching("SESSION_END"), [(3_600_000, "SESSION_END", 0)])
+        self.assertEqual(self.matching("SESSION_TIME_LIMIT"), [(3_600_000, "SESSION_TIME_LIMIT", 0)])
+        self.assertFalse(self.matching("TRIAL_START"))
+        self.assertFalse(self.board.valve_on)
+
+    def test_one_hour_stops_waiting_and_counts_completed_trials_only(self):
+        self.board = SimulatedBoard(clock=self.clock, simulate_licks=False)
+        self.start(count=2)
+        self.finish_cue()
+        self.advance(6030)
+        self.board.inject_lick()
+        self.drain()
+        self.advance(33000)
+        self.advance(1000)
+        self.send("CUE_ON 2")
+        self.advance(2000)
+        self.send("CUE_OFF 2")
+        self.advance(3_600_000 - self.clock.ms)
+        self.assertEqual(self.matching("SESSION_END"), [(3_600_000, "SESSION_END", 1)])
+        self.assertEqual(len(self.matching("TRIAL_END")), 1)
+        self.assertFalse(self.board.valve_on)
+        self.assertFalse(self.board.trigger_on)
+        self.send("CUE_OFF 2")  # In-flight ACK after timeout must not cause ERROR.
+        self.assertFalse(self.matching("ERROR"))
+
+    def test_limit_during_valve_pulse_closes_it_immediately(self):
+        self.board = SimulatedBoard(clock=self.clock, simulate_licks=False)
+        self.start()
+        self.finish_cue()
+        self.advance(6000)
+        self.assertTrue(self.board.valve_on)
+        self.board._session_deadline = self.clock.ms + 10
+        self.advance(9)
+        self.assertTrue(self.board.valve_on)
+        self.advance(1)
+        self.assertFalse(self.board.valve_on)
+        self.assertEqual(self.matching("SESSION_END"), [(12010, "SESSION_END", 0)])
+        self.assertFalse(self.matching("TRIAL_END"))
+
+    def test_earlier_trial_completion_cancels_time_limit(self):
+        self.start()
+        self.finish_cue()
+        self.advance(6130)
+        self.advance(3_600_000 - self.clock.ms)
+        self.assertEqual(self.matching("SESSION_END"), [(12130, "SESSION_END", 1)])
+        self.assertFalse(self.matching("SESSION_TIME_LIMIT"))
+
 
 if __name__ == "__main__":
     unittest.main()

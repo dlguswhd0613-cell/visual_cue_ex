@@ -138,6 +138,7 @@ class Experiment:
         self.exchange("HELLO", "READY", 1)
         # Reject older fixed-duration firmware before loading or starting trials.
         self.exchange("LICK_END_CAPS", "LICK_END_CAPS", 1)
+        self.exchange("SESSION_LIMIT_CAPS", "SESSION_LIMIT_CAPS", 3600)
         self.exchange(configuration_command(self.config), "CONFIG_OK", len(self.rows))
         trigger_command = photometry_command(self.config)
         if trigger_command:
@@ -146,6 +147,7 @@ class Experiment:
             self.exchange(f"TRIAL {row['Trial']} {row['ITI_Duration_S']} {row['Rewarded']}", "TRIAL_OK", row["Trial"])
         self.recording.metadata["status"] = "ready"
         self.recording.metadata["trial_end_rule"] = "post_reward_lick_and_valve_closed"
+        self.recording.metadata["session_limit_s"] = 3600
         self.recording.save_metadata()
         print("Ready. SPACE=start, ESC=abort to gray, Q=quit. One session per run.", flush=True)
 
@@ -182,18 +184,30 @@ class Experiment:
             self.cue_trial = value
             self.send(f"CUE_ON {value}")
             self.recording.event("DISPLAY_ON", value, at_ns=self.cue_on_ns)
+        elif kind == "SESSION_TIME_LIMIT":
+            self.recording.metadata["end_reason"] = "time_limit"
+            self.recording.metadata["completed_trials"] = value
+            self.show_gray()
+            self.cue_on_ns = None
+            self.active = False
+            print(f"SESSION_TIME_LIMIT: 3600s reached; {value} trials completed.", flush=True)
         elif kind in ("SESSION_END", "SESSION_ABORTED"):
             self.show_gray()
             self.cue_on_ns = None
             self.active = False
             self.done = True
             self.recording.metadata["status"] = "completed" if kind == "SESSION_END" else "aborted"
+            if kind == "SESSION_END":
+                self.recording.metadata.setdefault("end_reason", "trial_count")
+                self.recording.metadata["completed_trials"] = value
             self.recording.save_metadata()
             print(f"{kind}: {value}. Gray screen remains until Q.", flush=True)
         elif kind == "READY" and self.started:
             raise RuntimeError("Arduino reset during session")
         elif kind == "SESSION_START":
             print(f"SESSION_START: {value}. Session started; initial marker and ITI precede the first trial.", flush=True)
+        elif kind == "ITI_DURATION_S":
+            print(f"ITI_DURATION_S: {value}s", flush=True)
         elif kind in ("TRIAL_START", "TRIAL_END", "REWARD_ON", "LICK", "WAIT_LICK", "ITI_START"):
             print(f"{kind}: {value}", flush=True)
 

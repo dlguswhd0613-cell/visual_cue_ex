@@ -7,6 +7,7 @@
  * Commands, ASCII, one per line, at 115200 baud:
  *   HELLO                         -> READY,1 (only while idle)
  *   LICK_END_CAPS                 -> LICK_END_CAPS,1 (rewarded trials wait for lick)
+ *   SESSION_LIMIT_CAPS            -> SESSION_LIMIT_CAPS,3600 (one-hour hard limit)
  *   CONFIG n cue_delay_ms cue_ms reward_at_ms post_reward_ms valve_ms initial_iti_s
  *   TRIGGERS cue_lead_ms reward_lead_ms pulse_ms -> TRIGGERS_OK,2
  *     Optional after CONFIG: shared D7 for cue and reward, active HIGH.
@@ -36,7 +37,10 @@
  * reward at 1..60000 ms, strictly greater than cue delay + cue duration;
  * post-reward recording 1..60000 ms and >= valve duration; valve 1..1000 ms;
  * initial ITI 0..65535 s. Rewarded trials end once a post-reward rising lick
- * edge has been accepted AND the valve pulse has finished. No lick timeout.
+ * edge has been accepted AND the valve pulse has finished. The whole session
+ * stops at 3600s from SESSION_START, including the marker and initial ITI.
+ * SESSION_TIME_LIMIT and SESSION_END report completed trials only; a partial
+ * trial at the deadline is not completed. Outputs close before either event.
  * Nonreward trials end at reward_at + post_reward. Next ITI starts at TRIAL_END.
  * TRIAL ITIs: 0..65535 s; rewarded: 0 or 1. First ITI uses CONFIG instead.
  * Defaults belong to the host: 100 trials, cue starts at 1000 ms for 2000 ms,
@@ -70,6 +74,7 @@ const uint8_t PIN_EVENT_TRIGGER = 7;
 const uint8_t PIN_UNUSED_TRIGGER = 8; // Former reward output; keep LOW.
 const uint16_t MAX_TRIALS = 200;
 const uint32_t HEARTBEAT_TIMEOUT_MS = 2000;
+const uint32_t SESSION_LIMIT_MS = 3600000UL;
 // Request-to-display acknowledgement must arrive within 100 ms. Rejecting
 // late onset preserves the requested trial timeline rather than rewarding
 // a substantially delayed cue. This limit includes USB and display latency.
@@ -103,6 +108,9 @@ uint32_t lickCount = 0;
 bool configured = false;
 bool lastLickHigh = false;
 bool rewardLickSatisfied = false;
+bool sessionRunning = false;
+bool sessionTimedOut = false;
+uint32_t sessionStartedMs = 0;
 bool markerOn = false;
 uint8_t completedBlinks = 0;
 char lineBuffer[96];
@@ -145,6 +153,7 @@ void abortSession(uint8_t reason) {
   safeOutputs();
   manualValveHigh = false;
   rewardLickSatisfied = false;
+  sessionRunning = false;
   state = IDLE;
   configured = false;
   loadedTrials = 0;
@@ -153,6 +162,21 @@ void abortSession(uint8_t reason) {
     logEvent(F("MANUAL_END"), reason);
   }
   logEvent(F("SESSION_ABORTED"), reason);
+}
+
+bool endSessionIfDue() {
+  if (!sessionRunning || uint32_t(millis() - sessionStartedMs) < SESSION_LIMIT_MS) return false;
+  safeOutputs();
+  sessionRunning = false;
+  sessionTimedOut = true;
+  rewardLickSatisfied = false;
+  state = IDLE;
+  configured = false;
+  loadedTrials = 0;
+  // trialIndex counts completed trials, including when waiting in the next ITI.
+  logEvent(F("SESSION_TIME_LIMIT"), trialIndex);
+  logEvent(F("SESSION_END"), trialIndex);
+  return true;
 }
 
 void protocolError(uint8_t code) {
@@ -180,6 +204,7 @@ void advanceTrial() {
   if (trialIndex >= totalTrials) {
     safeOutputs();
     state = IDLE;
+    sessionRunning = false;
     logEvent(F("SESSION_END"), totalTrials);
   } else {
     startITI();
@@ -261,6 +286,7 @@ bool readNumbers(char *remaining, uint32_t *values, uint8_t count) {
 }
 
 void handleLine() {
+  endSessionIfDue();
   char *remaining;
   char *command = strtok_r(lineBuffer, " \t", &remaining);
   if (command == NULL) return;
@@ -281,6 +307,10 @@ void handleLine() {
     if (!readNumbers(remaining, values, 0)) { protocolError(1); return; }
     if (state != IDLE) { protocolError(3); return; }
     logEvent(F("LICK_END_CAPS"), 1);
+  } else if (strcmp(command, "SESSION_LIMIT_CAPS") == 0) {
+    if (!readNumbers(remaining, values, 0)) { protocolError(1); return; }
+    if (state != IDLE) { protocolError(3); return; }
+    logEvent(F("SESSION_LIMIT_CAPS"), SESSION_LIMIT_MS / 1000UL);
   } else if (strcmp(command, "TTL_CAPS") == 0) {
     if (!readNumbers(remaining, values, 0)) { protocolError(1); return; }
     if (state != IDLE) { protocolError(3); return; }
@@ -373,6 +403,9 @@ void handleLine() {
     if (!configured || loadedTrials != totalTrials) { protocolError(4); return; }
     safeOutputs();
     trialIndex = 0;
+    sessionRunning = true;
+    sessionTimedOut = false;
+    sessionStartedMs = millis();
     lickCount = 0;
     lastLickHigh = digitalRead(PIN_LICK) == HIGH;
     lastLickMs = millis() - LICK_DEBOUNCE_MS;
@@ -383,6 +416,8 @@ void handleLine() {
     logEvent(F("SESSION_START"), totalTrials);
   } else if (strcmp(command, "CUE_ON") == 0 || strcmp(command, "CUE_OFF") == 0) {
     if (!readNumbers(remaining, values, 1)) { protocolError(1); return; }
+    // The Pi may already have sent an ACK when the deadline closed the session.
+    if (state == IDLE && sessionTimedOut) return;
     bool isOn = strcmp(command, "CUE_ON") == 0;
     if (values[0] != trialIndex + 1UL || (isOn ? state != WAIT_CUE_ON : state != CUE_VISIBLE)) {
       protocolError(6); return;
@@ -441,6 +476,7 @@ void checkLick() {
 }
 
 void runSession() {
+  if (endSessionIfDue()) return;
   uint32_t now = millis();
   if (state != IDLE && uint32_t(now - lastHeartbeatMs) >= HEARTBEAT_TIMEOUT_MS) {
     abortSession(2);
@@ -545,6 +581,7 @@ void setup() {
 }
 
 void loop() {
+  if (endSessionIfDue()) return;
   closeRewardIfDue();
   closeTriggersIfDue();
   handleSerial();

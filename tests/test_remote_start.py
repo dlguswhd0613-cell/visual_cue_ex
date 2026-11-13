@@ -72,3 +72,27 @@ class RemoteStartTests(unittest.TestCase):
         self.assertIn("LICK_END_CAPS", commands)
         self.assertNotIn("START", commands)
         self.assertIn("STOP", commands)
+
+    def test_firmware_without_session_limit_rejected_before_start(self):
+        board = SimulatedBoard()
+        original_write = board.write_line
+        commands = []
+
+        def write(command):
+            commands.append(command)
+            if command == "SESSION_LIMIT_CAPS":
+                board._emit("ERROR", 1)
+            else:
+                original_write(command)
+
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict(os.environ, {"SDL_VIDEODRIVER": "dummy"}), \
+                patch("visualcue.simulated_board.SimulatedBoard", return_value=board), \
+                patch.object(board, "write_line", side_effect=write), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            result = main(["--simulate", "--autostart", "--outdir", directory])
+        self.assertEqual(result, 1)
+        self.assertIn("SESSION_LIMIT_CAPS", commands)
+        self.assertNotIn("START", commands)
+        self.assertIn("STOP", commands)
