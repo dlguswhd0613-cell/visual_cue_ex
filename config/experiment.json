@@ -29,7 +29,7 @@
     "max_cue_overrun_ms": 100
   },
   "stimulus": {
-    "diameter_px": 370,
+    "diameter_px": 276,
     "cycles_per_patch": 4,
     "orientation_deg": 45,
     "contrast": 1.0,
