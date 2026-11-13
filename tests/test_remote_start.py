@@ -75,6 +75,9 @@ class RemoteStartTests(unittest.TestCase):
         self.assertIn("LICK_END_CAPS", commands)
         self.assertNotIn("START", commands)
         self.assertIn("STOP", commands)
+        self.assertIn("command='LICK_END_CAPS'", output.getvalue())
+        self.assertIn("Post-reward lick trial endings", output.getvalue())
+        self.assertIn("one-hour session limit runs in Python", output.getvalue())
 
     def test_host_time_limit_completes_with_previous_firmware_and_exits(self):
         board = SimulatedBoard()

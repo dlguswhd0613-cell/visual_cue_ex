@@ -122,7 +122,16 @@ class Experiment:
                 if event.type == self.pg.QUIT or (event.type == self.pg.KEYDOWN and event.key in (self.pg.K_ESCAPE, self.pg.K_q)):
                     raise KeyboardInterrupt
             self.ping()
-            for _, kind, actual in self.read_events():
+            try:
+                replies = self.read_events()
+            except RuntimeError as error:
+                hint = ""
+                if command == "LICK_END_CAPS":
+                    hint = (" Post-reward lick trial endings require the lick-end Uno sketch: "
+                            "arduino/HEADFIXED_ARDUINO/HEADFIXED_ARDUINO.ino. "
+                            "The one-hour session limit runs in Python.")
+                raise RuntimeError(f"{error}; command={command!r}.{hint}") from error
+            for _, kind, actual in replies:
                 if kind == "SESSION_ABORTED":
                     raise RuntimeError(f"Arduino aborted during configuration: {actual}")
                 if kind == expected == "TRIGGERS_OK" and actual != value:
