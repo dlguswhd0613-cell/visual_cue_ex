@@ -191,7 +191,7 @@ class Experiment:
             raise RuntimeError("Arduino reset during session")
         elif kind == "SESSION_START":
             print(f"SESSION_START: {value}. Session started; initial marker and ITI precede the first trial.", flush=True)
-        elif kind in ("TRIAL_START", "TRIAL_END", "REWARD_ON"):
+        elif kind in ("TRIAL_START", "TRIAL_END", "REWARD_ON", "LICK"):
             print(f"{kind}: {value}", flush=True)
 
     def update_cue(self):
