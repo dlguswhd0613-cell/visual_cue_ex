@@ -8,7 +8,7 @@
 
 대기·시행 사이·실험 종료 후에는 회색 화면이 유지됩니다. 자극은 화면 정중앙(가로 50%, 세로 50%)에 놓인 원형 Gabor 패치이며, 흑백 줄무늬가 공간상으로 번갈아 배치된 **정지 무늬**입니다. 움직임이나 깜빡임은 없습니다. 가장자리는 Gaussian 형태로 회색 배경에 부드럽게 섞입니다.
 
-기본 세션은 최대 100회이며 모든 시행에서 보상을 제공합니다. **100회 완료 또는 세션 시작 후 1시간(3600초) 도달 중 먼저 발생한 조건으로 종료합니다.** 세션 시작 시 기존 코드와 같은 LED/TTL 시작 신호를 보낸 뒤 최초 대기 90초가 시작됩니다. 이후 각 시행의 시간표는 다음과 같습니다.
+기본 세션은 100회이며 모든 시행에서 보상을 제공합니다. **세션 시간 제한은 없으며, 설정된 모든 시행을 완료하면 종료합니다.** 세션 시작 시 기존 코드와 같은 LED/TTL 시작 신호를 보낸 뒤 최초 대기 90초가 시작됩니다. 이후 각 시행의 시간표는 다음과 같습니다.
 
 | 시행 시작 기준 | 화면 및 장치 동작 |
 |---|---|
@@ -22,19 +22,17 @@
 | 시행 종료 직후 | 회색 화면에서 ITI 10–20초 시작 (감소하는 지수분포) |
 | ITI 경과 후 | 다음 시행 시작 |
 
-ITI는 **보상 후 lick 조건을 만족해 시행이 종료된 시점부터 다음 시행 시작까지**의 시간입니다. 기본값은 10–20초의 정수 초를 감소하는 지수분포로 선택합니다. 따라서 연속 시행의 시작 간격은 lick 시점에 따라 달라집니다. 예를 들어 시행 시작 후 7초에 첫 보상 후 lick이 감지되고 ITI가 12초라면, 시행은 7초에 끝나고 다음 시행은 19초에 시작합니다. 시간 제한 전에 100회를 마칠 때는 마지막 시행도 같은 lick 조건을 만족해야 세션이 종료되며, 이후 ITI는 없습니다. 보상 밸브의 30ms는 보상 부피가 아니므로 실제 장치에서 양을 측정해야 합니다.
+ITI는 **보상 후 lick 조건을 만족해 시행이 종료된 시점부터 다음 시행 시작까지**의 시간입니다. 기본값은 10–20초의 정수 초를 감소하는 지수분포로 선택합니다. 따라서 연속 시행의 시작 간격은 lick 시점에 따라 달라집니다. 예를 들어 시행 시작 후 7초에 첫 보상 후 lick이 감지되고 ITI가 12초라면, 시행은 7초에 끝나고 다음 시행은 19초에 시작합니다. 100회를 마치려면 마지막 시행도 같은 lick 조건을 만족해야 세션이 종료되며, 이후 ITI는 없습니다. 보상 밸브의 30ms는 보상 부피가 아니므로 실제 장치에서 양을 측정해야 합니다.
 
 Lick은 D11의 LOW→HIGH 전환으로 감지하고, 직전 감지 이후 50ms 미만의 신호는 제외합니다. 감지할 때마다 터미널에 `LICK: 1`, `LICK: 2`처럼 누적 횟수를 즉시 표시하고, `events.csv`에도 시각과 누적 횟수를 저장합니다. 시행 중과 ITI를 포함해 세션 전체에서 기록합니다. **보상 시작 전 lick은 종료 조건에 포함하지 않으며, 보상 시작 후 첫 유효 lick부터 인정합니다.** 센서가 보상 전부터 계속 HIGH인 경우 새 LOW→HIGH 전환이 필요합니다. 밸브가 열려 있는 동안 감지한 lick도 인정하되 설정된 밸브 개방 시간을 끝까지 유지한 뒤 시행을 종료합니다.
 
-**보상 후 lick이 없으면 밸브를 닫고 회색 화면에서 기다리되, 세션 시작 후 1시간이면 종료합니다.** 자동으로 다음 ITI로 넘어가거나 보상을 다시 주지 않습니다. 터미널의 `WAIT_LICK`은 이 대기 상태이고, lick을 감지하면 `LICK` → `TRIAL_END` → `ITI_START` 순서로 기록됩니다(밸브 개방 중 lick은 밸브 종료 뒤 `TRIAL_END`). STOP·Esc·Ctrl+C 또는 통신 끊김 시에는 중단할 수 있습니다. 비보상 시행(`Rewarded=0`)은 lick을 기다리지 않고 `reward_at_ms + post_reward_ms`에 종료합니다.
+**보상 후 lick이 없으면 밸브를 닫고 회색 화면에서 계속 기다립니다.** 자동으로 다음 ITI로 넘어가거나 보상을 다시 주지 않습니다. 터미널의 `WAIT_LICK`은 이 대기 상태이고, lick을 감지하면 `LICK` → `TRIAL_END` → `ITI_START` 순서로 기록됩니다(밸브 개방 중 lick은 밸브 종료 뒤 `TRIAL_END`). STOP·Esc·Ctrl+C 또는 통신 끊김 시에는 중단할 수 있습니다. 비보상 시행(`Rewarded=0`)은 lick을 기다리지 않고 `reward_at_ms + post_reward_ms`에 종료합니다.
 
 ITI 시작 시 터미널에는 `ITI_START: 2`(다음 시행 번호), `ITI_DURATION_S: 12s`(해당 ITI 길이)처럼 표시됩니다.
 
-**1시간은 Python이 `START`를 보내는 시점부터 계산하며 시작 표시 3초와 최초 ITI 90초도 포함합니다.** Python이 3600초를 확인하면 진행 중인 trial/lick/ITI 대기를 중지하는 기존 `STOP` 명령을 보내고 화면을 회색으로 복귀시킵니다. Arduino는 `STOP`을 받아 밸브·TTL·LED를 LOW로 내리고 `SESSION_ABORTED,1`로 응답합니다. Python은 이 응답을 확인한 뒤 시간 제한에 따른 정상 완료로 저장합니다. 응답이 2초 내에 오지 않으면 실패로 기록합니다.
+**세션 시간 제한은 없습니다.** 설정된 모든 trial을 완료하면 Arduino의 `SESSION_END`로 정상 종료하고, `metadata.json`에 `status: completed`, `end_reason: trial_count`, `completed_trials`를 저장합니다. `--exit-when-done`을 사용하면 정상 종료 뒤 프로그램도 종료됩니다.
 
-`events.csv`에는 Python의 `SESSION_TIME_LIMIT,3600`, Arduino의 원래 정지 응답, Python의 `SESSION_END,<완료 trial 수>`가 남습니다. 미완료 trial에는 `TRIAL_END`를 만들지 않습니다. `metadata.json`에는 `status: completed`, `end_reason: time_limit`, `completed_trials`, `session_limit_s: 3600`, `session_limit_controller: python`을 저장합니다. 100회를 먼저 완료하면 `end_reason`은 `trial_count`입니다. `--exit-when-done`을 사용하면 정지 확인 후 프로그램도 종료됩니다. TTL 단독 시험과 priming에는 이 제한을 적용하지 않습니다.
-
-**1시간 제한은 Python만 업데이트하면 됩니다.** Arduino 스케치는 1시간 제한을 추가하기 전의 보상 후 lick 종료 버전(`771cc24`)으로 복원했으며, `SESSION_LIMIT_CAPS` 명령은 보내지 않습니다. 이미 이 lick 종료 버전을 사용 중이라면 Arduino 재업로드가 필요 없습니다. Python은 기존 `LICK_END_CAPS` 확인을 유지하므로, 그보다 오래된 고정 시간 종료 펌웨어는 lick 종료 버전으로 업데이트해야 합니다. `metadata.json`의 `trial_end_rule`에도 trial 종료 조건이 저장됩니다.
+시간 제한 제거는 **Pi의 Python만 업데이트하면 됩니다.** 보상 후 lick 종료를 지원하는 Uno 스케치(`771cc24`)를 계속 사용하며, `SESSION_LIMIT_CAPS` 명령은 보내지 않습니다. Python은 기존 `LICK_END_CAPS` 확인을 유지하므로, 더 오래된 고정 시간 종료 펌웨어는 lick 종료 버전으로 업데이트해야 합니다. `metadata.json`의 `trial_end_rule`에도 trial 종료 조건이 저장됩니다.
 
 자극 무늬의 예시입니다. 현재 실행 시 위치는 화면 정중앙입니다. 실제 픽셀 크기는 `diameter_px` 설정으로 바뀝니다.
 
@@ -126,7 +124,7 @@ python HEADFIXED_PYTHON.py --config config/experiment.json --port /dev/ttyACM0 -
 
 | `session` 설정 | 기본값 | 의미 |
 |---|---:|---|
-| `trials` | 100 | 최대 시행 횟수. 1시간 제한에 먼저 도달하면 조기 종료 |
+| `trials` | 100 | 시행 횟수 |
 | `cue_delay_ms` | 1000 | 시행 시작에서 자극 시작까지 |
 | `cue_duration_ms` | 2000 | 자극 표시 시간 |
 | `reward_at_ms` | 6000 | 시행 시작에서 보상 시작까지 |

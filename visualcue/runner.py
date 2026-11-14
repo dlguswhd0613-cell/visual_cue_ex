@@ -14,9 +14,6 @@ from .recording import SessionLog
 from .schedule import generate_schedule, load_schedule
 from .stimulus import make_gabor
 
-SESSION_LIMIT_S = 3600
-STOP_ACK_TIMEOUT_S = 2.0
-
 
 def parse_event(line):
     parts = line.split(",")
@@ -39,9 +36,6 @@ class Experiment:
         self.started = False
         self.active = False
         self.done = False
-        self.session_started_at = None
-        self.time_limit_stop_at = None
-        self.completed_trials = 0
         self.cue_on_ns = None
         self.cue_trial = None
         self.last_received = time.monotonic()
@@ -128,8 +122,7 @@ class Experiment:
                 hint = ""
                 if command == "LICK_END_CAPS":
                     hint = (" Post-reward lick trial endings require the lick-end Uno sketch: "
-                            "arduino/HEADFIXED_ARDUINO/HEADFIXED_ARDUINO.ino. "
-                            "The one-hour session limit runs in Python.")
+                            "arduino/HEADFIXED_ARDUINO/HEADFIXED_ARDUINO.ino.")
                 raise RuntimeError(f"{error}; command={command!r}.{hint}") from error
             for _, kind, actual in replies:
                 if kind == "SESSION_ABORTED":
@@ -161,8 +154,6 @@ class Experiment:
             self.exchange(f"TRIAL {row['Trial']} {row['ITI_Duration_S']} {row['Rewarded']}", "TRIAL_OK", row["Trial"])
         self.recording.metadata["status"] = "ready"
         self.recording.metadata["trial_end_rule"] = "post_reward_lick_and_valve_closed"
-        self.recording.metadata["session_limit_s"] = SESSION_LIMIT_S
-        self.recording.metadata["session_limit_controller"] = "python"
         self.recording.save_metadata()
         print("Ready. SPACE=start, ESC=abort to gray, Q=quit. One session per run.", flush=True)
 
@@ -172,15 +163,12 @@ class Experiment:
         self.started = self.active = True
         self.recording.metadata["status"] = "running"
         self.recording.save_metadata()
-        # Start the host clock with START, so the marker and initial ITI count.
-        self.session_started_at = time.monotonic()
         self.send("START")
         print("START sent. Waiting for Arduino SESSION_START. Ctrl+C in this terminal stops the session.", flush=True)
 
     def abort(self, reason):
         # Stop physical outputs before any possibly blocking display or disk operation.
         self.board.write_line("STOP")
-        self.time_limit_stop_at = None
         self.show_gray()
         self.cue_on_ns = None
         self.recording.event("COMMAND", "STOP")
@@ -191,44 +179,7 @@ class Experiment:
         self.recording.metadata["abort_reason"] = reason
         self.recording.save_metadata()
 
-    def check_session_limit(self):
-        now = time.monotonic()
-        if self.time_limit_stop_at is not None:
-            if not self.done and now - self.time_limit_stop_at >= STOP_ACK_TIMEOUT_S:
-                raise TimeoutError("No Arduino STOP acknowledgment at session time limit")
-            return
-        if (not self.active or self.session_started_at is None
-                or now - self.session_started_at < SESSION_LIMIT_S):
-            return
-        # Use the existing STOP command; no new firmware command is required.
-        # Send it before display or disk work, and wait for its acknowledgment
-        # before reporting a completed session or allowing --exit-when-done.
-        self.board.write_line("STOP")
-        self.time_limit_stop_at = time.monotonic()
-        self.active = False
-        self.cue_on_ns = None
-        self.show_gray()
-        self.recording.event("COMMAND", "STOP")
-        self.recording.event("SESSION_TIME_LIMIT", SESSION_LIMIT_S)
-        self.recording.metadata["status"] = "stopping"
-        self.recording.metadata["end_reason"] = "time_limit"
-        self.recording.save_metadata()
-        print(f"SESSION_TIME_LIMIT: {SESSION_LIMIT_S}s reached; stopping Arduino.", flush=True)
-
     def handle_event(self, kind, value):
-        if self.time_limit_stop_at is not None:
-            # Requests already in transit must not turn the display back on or
-            # send a cue ACK after STOP. Keep their raw records in events.csv.
-            if kind == "CUE_REQUEST":
-                return
-            if kind == "SESSION_END":
-                self.completed_trials = value
-                return  # Still wait for STOP's acknowledgment.
-            if kind == "SESSION_ABORTED":
-                if value != 1:
-                    raise RuntimeError(f"Arduino aborted before acknowledging time-limit STOP: {value}")
-                kind, value = "SESSION_END", self.completed_trials
-                self.recording.event("SESSION_END", value)
         if kind == "CUE_REQUEST":
             if not self.active or self.cue_on_ns is not None:
                 raise RuntimeError("Unexpected cue request")
@@ -246,7 +197,6 @@ class Experiment:
             self.done = True
             self.recording.metadata["status"] = "completed" if kind == "SESSION_END" else "aborted"
             if kind == "SESSION_END":
-                self.completed_trials = value
                 self.recording.metadata.setdefault("end_reason", "trial_count")
                 self.recording.metadata["completed_trials"] = value
             self.recording.save_metadata()
@@ -257,10 +207,7 @@ class Experiment:
             print(f"SESSION_START: {value}. Session started; initial marker and ITI precede the first trial.", flush=True)
         elif kind == "ITI_DURATION_S":
             print(f"ITI_DURATION_S: {value}s", flush=True)
-        elif kind == "TRIAL_END":
-            self.completed_trials = value
-            print(f"{kind}: {value}", flush=True)
-        elif kind in ("TRIAL_START", "REWARD_ON", "LICK", "WAIT_LICK", "ITI_START"):
+        elif kind in ("TRIAL_START", "TRIAL_END", "REWARD_ON", "LICK", "WAIT_LICK", "ITI_START"):
             print(f"{kind}: {value}", flush=True)
 
     def update_cue(self):
@@ -284,10 +231,9 @@ class Experiment:
             self.start()
         timer = self.pg.time.Clock()
         while True:
-            self.check_session_limit()
             for event in self.pg.event.get():
                 if event.type == self.pg.QUIT or (event.type == self.pg.KEYDOWN and event.key == self.pg.K_q):
-                    if self.active or (self.time_limit_stop_at is not None and not self.done):
+                    if self.active:
                         self.abort("window closed")
                     return
                 if event.type == self.pg.KEYDOWN:
@@ -299,9 +245,7 @@ class Experiment:
                     self.abort("stimulus window lost focus")
             self.ping()
             for _, kind, value in self.read_events():
-                self.check_session_limit()
                 self.handle_event(kind, value)
-            self.check_session_limit()
             self.update_cue()
             if time.monotonic() - self.last_received > 2.0:
                 raise TimeoutError("Arduino response timeout; stopping session")
