@@ -23,8 +23,9 @@ void reset() {
  command("STOP"); pins[11]=0; loop();
  Serial.output.clear();
 }
-void configure(unsigned n=1, unsigned iti=0, unsigned initial=0) {
+void configure(unsigned n=1, unsigned iti=0, unsigned initial=0, unsigned task=2) {
  command("CONFIG "+std::to_string(n)+" 1000 2000 9000 4000 30 "+std::to_string(initial));
+ if(task!=2) command("TASK "+std::to_string(task));
  for(unsigned i=1;i<=n;i++) command("TRIAL "+std::to_string(i)+" "+std::to_string(iti)+" 1");
  command("START");
 }
@@ -37,8 +38,9 @@ void lick() {pins[11]=0;loop();pins[11]=1;loop();pins[11]=0;loop();}
 void toCue() {until(WAIT_CUE_ON); command("CUE_ON 1");}
 void toReward() {toCue();tick(2000);command("CUE_OFF 1");until(VALVE_OPEN);}
 void assertSafe(){assert(pins[12]==0 && pins[9]==0 && pins[10]==0 && pins[6]==0 && pins[7]==0 && pins[8]==0);}
-void configureTriggers(bool rewarded=true, unsigned count=1, unsigned lead=100, unsigned width=20) {
+void configureTriggers(bool rewarded=true, unsigned count=1, unsigned lead=100, unsigned width=20, unsigned task=2) {
  command("CONFIG "+std::to_string(count)+" 1000 2000 6000 4000 30 0");
+ if(task!=2) command("TASK "+std::to_string(task));
  command("TRIGGERS "+std::to_string(lead)+" "+std::to_string(lead)+" "+std::to_string(width));
  for(unsigned i=1;i<=count;i++)command("TRIAL "+std::to_string(i)+" 0 "+std::to_string(rewarded));
  command("START");
@@ -265,4 +267,40 @@ int main() {
  reset();configure();toReward();tick(30);fakeNow=UINT32_MAX-5;command("PING");
  tick(10);lick();assert(state==IDLE);assertSafe();
  std::cout<<"PASS STOP/watchdog while waiting and lick accepted across millis rollover\n";
+ for(bool withLick : {false,true}) {
+  reset();configure(2,10,0,1);toReward();auto rewardTime=fakeNow;
+  if(withLick)lick();
+  tick(29);assert(pins[12]==HIGH);
+  tick(1);assert(pins[12]==LOW);assert(state==POST_REWARD);
+  tick(3969);if(withLick)lick();assert(state==POST_REWARD);assert(!has(",TRIAL_END,"));
+  tick(1);assert(state==ITI);assert(fakeNow-rewardTime==4000);
+  assert(has(std::to_string(fakeNow)+",TRIAL_END,1\n"));
+  assert(has(std::to_string(fakeNow)+",ITI_START,2\n"));
+  tick(9999);assert(state==ITI);tick(1);assert(state==TRIAL_LEAD);
+  until(WAIT_CUE_ON);command("CUE_ON 2");tick(2000);command("CUE_OFF 2");until(VALVE_OPEN);
+  tick(4000);assert(state==IDLE);assert(has(",SESSION_END,2\n"));assertSafe();
+  assert(!has(",WAIT_LICK,"));
+ }
+ std::cout<<"PASS Pavlovian fixed end with/without lick, full valve pulse, ITI and final session end\n";
+ reset();command("TASK 1");assert(has(",ERROR,4\n"));
+ command("CONFIG 1 1000 2000 9000 4000 30 0");
+ command("TASK 1");assert(taskMode==1);assert(has(",TASK_OK,1\n"));
+ for(const std::string args : {"0","3","-1","1 2",""}) {
+  Serial.output.clear();command("TASK "+args);assert(has(",ERROR,"));assert(taskMode==1);
+ }
+ command("TASK 2");assert(taskMode==2);assert(has(",TASK_OK,2\n"));
+ command("TASK 1");command("CONFIG 1 1000 2000 9000 4000 30 0");assert(taskMode==2);
+ command("TRIAL 1 0 1");command("START");command("TASK 1");assertSafe();assert(state==IDLE);
+ assert(has(",ERROR,3\n"));
+ std::cout<<"PASS task bounds, CONFIG reset to Operant and active-session task change rejected\n";
+ reset();fakeNow=UINT32_MAX-5000;configureTriggers(true,1,100,20,1);toReward();tick(4000);
+ assert(state==IDLE);assertSafe();assert(has(",CUE_TRIGGER_ON,1\n"));assert(has(",REWARD_TRIGGER_ON,1\n"));
+ reset();configureTriggers(false,1,100,20,1);toCue();tick(2000);command("CUE_OFF 1");until(POST_REWARD);
+ tick(4000);assert(state==IDLE);assert(!has(",REWARD_ON,"));assert(!has(",REWARD_TRIGGER_ON,"));
+ for(bool watchdog : {false,true}) {
+  reset();configure(1,0,0,1);toReward();tick(30);assert(state==POST_REWARD);
+  if(watchdog)tick(2000,false);else command("STOP");
+  assertSafe();assert(state==IDLE);assert(!has(",TRIAL_END,"));
+ }
+ std::cout<<"PASS Pavlovian TTL, nonreward, millis rollover and STOP/watchdog\n";
 }

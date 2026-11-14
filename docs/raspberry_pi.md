@@ -101,9 +101,11 @@ python HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id mouse01
 
 실제 세션에서는 `--simulate`, `--demo`를 사용하지 않습니다. 준비된 회색 화면에서 **Space**를 눌러 시작합니다. **Esc**는 세션을 중단하고 회색 화면으로 돌립니다. **Q**는 프로그램을 종료합니다. 세션이 끝난 뒤에도 회색 화면은 유지됩니다. 다음 개체는 프로그램을 다시 실행하고 `--mouse-id`를 바꾸세요.
 
-기본 시간표는 시행 시작 → 1초에 자극 표시 → 3초에 자극 제거 → 6초에 보상 → 보상 후 첫 lick 및 밸브 닫힘 확인 시 시행 종료 → 10–20초 ITI입니다. 보상 전 lick은 종료 조건에 포함하지 않습니다. 밸브 개방 중 lick은 인정하되 30ms 개방을 완료한 뒤 종료합니다. Lick이 없으면 밸브를 닫고 회색 화면에서 계속 기다리며, 터미널에 `WAIT_LICK`이 표시됩니다. 다음 시행은 실제 시행 종료부터 ITI를 센 뒤 시작합니다. 마지막 시행도 lick을 기다린 뒤 세션을 종료합니다. 최초 대기는 별도로 90초입니다.
+2번 Operant의 기본 시간표는 시행 시작 → 1초에 자극 표시 → 3초에 자극 제거 → 6초에 보상 → 보상 후 첫 lick 및 밸브 닫힘 확인 시 시행 종료 → 10–20초 ITI입니다. 보상 전 lick은 종료 조건에 포함하지 않습니다. 밸브 개방 중 lick은 인정하되 30ms 개방을 완료한 뒤 종료합니다. Lick이 없으면 밸브를 닫고 회색 화면에서 계속 기다리며, 터미널에 `WAIT_LICK`이 표시됩니다. 다음 시행은 실제 시행 종료부터 ITI를 센 뒤 시작합니다. 마지막 시행도 lick을 기다린 뒤 세션을 종료합니다. 최초 대기는 별도로 90초입니다.
 
-**세션 시간 제한은 없습니다.** 설정된 모든 trial을 완료하면 정상 종료합니다. `metadata.json`에는 `end_reason: trial_count`와 완료 trial 수를 저장합니다. 시간 제한 제거는 Pi의 Python만 업데이트하면 되며, 보상 후 lick 종료를 지원하는 Uno 스케치(`771cc24`)를 계속 사용합니다. 보상 후 lick 종료 자체를 지원하지 않는 더 오래된 펌웨어는 업데이트가 필요합니다. `--demo`는 모의 실행에서만 사용할 수 있습니다. `--autostart`는 실제 장치에서도 Space 없이 시작하며 실제 보상을 제공합니다.
+1번 Pavlovian은 `--task 1`로 선택합니다. lick과 관계없이 `reward_at_ms + post_reward_ms`에 trial이 끝나고 ITI가 시작됩니다. 현재 설정에서는 보상 6초 + 보상 후 관찰 4초 = trial 시작 후 10초입니다. 2번 Operant는 `--task 2`로 선택하며 위의 lick 종료 동작을 사용합니다. `--task pavlovian`, `--task operant`도 사용할 수 있습니다. 옵션을 생략하면 `session.task` 설정을 사용하며 기본은 `operant`입니다. 두 모드 모두 보상은 예정 시각에 제공되고, Operant의 lick은 trial 종료 조건입니다.
+
+**두 task 모두 세션 시간 제한은 없습니다.** 설정된 모든 trial을 완료하면 정상 종료합니다. `metadata.json`에는 `task`, `task_number`, `trial_end_rule`, `end_reason: trial_count`와 완료 trial 수가 저장됩니다. **Pavlovian 선택에는 최신 Uno 스케치 업로드가 한 번 필요합니다.** 업로드 후 같은 스케치에서 두 모드를 사용할 수 있습니다. 기존 lick 종료 펌웨어(`771cc24`)를 사용하는 경우 Operant는 그대로 실행할 수 있습니다. `--demo`는 모의 실행에서만 사용할 수 있습니다. `--autostart`는 실제 장치에서도 Space 없이 시작하며 실제 보상을 제공합니다.
 
 ### Pi 키보드 없이 SSH에서 시작
 
@@ -111,7 +113,8 @@ Pi의 그래픽 데스크톱에 로그인되어 있어야 합니다. 일반적�
 
 ```bash
 cd ~/visual_cue_ex
-DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id 10_06 --autostart
+DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id B67 --task 1 --autostart --exit-when-done
+# Operant는 --task 1 대신 --task 2를 사용합니다.
 ```
 
 가상환경으로 설치했다면 실행 전에 `source .venv/bin/activate`를 사용하세요. 터미널에 `START sent` 뒤 `SESSION_START`가 나오면 Uno가 세션 시작을 확인한 것입니다. 기본 설정은 시작 표시 3초와 초기 ITI 90초를 거치므로 첫 자극은 시작 약 94초 후 표시됩니다. 창은 시작 전부터 회색이어야 합니다. 이어서 `TRIAL_START`, `REWARD_ON`, 필요 시 `WAIT_LICK`, 그리고 `LICK`, `TRIAL_END`, `ITI_START`, `ITI_DURATION_S`가 출력됩니다. ITI의 시행 번호는 다음 시행이며, `ITI_DURATION_S`에는 대기 시간이 초 단위로 표시됩니다.
@@ -134,6 +137,6 @@ SSH 터미널의 **Ctrl+C**로 중단합니다. SSH 연결을 유지하고 전�
 | 자극 크기 오류 | `diameter_px`가 화면에 들어가는지 |
 | 통신·화면 오류로 중단됨 | 터미널 오류 및 해당 세션의 `events.csv` |
 
-`Arduino ERROR 1`은 알 수 없거나 형식이 잘못된 명령에 대한 응답입니다. 준비 중 오류에는 `command='...'`도 표시됩니다. 기존 실행 기록에서는 `tail -n 15 data/<세션 폴더>/events.csv`로 `ERROR` 직전의 `COMMAND`를 확인하세요. `LICK_END_CAPS`에서 실패하면 Arduino가 보상 후 lick 종료 기능을 지원하는지 확인해야 합니다. 그 기능 이전의 고정 시간 종료 펌웨어는 lick과 무관하게 trial을 진행하므로, 확인 명령만 제거하면 요청한 동작을 보장할 수 없습니다. 이 경우 저장소의 lick 종료 스케치를 Uno에 업로드해야 합니다. 세션 시간 제한은 없으며 `SESSION_LIMIT_CAPS`는 보내지 않습니다.
+`Arduino ERROR 1`은 알 수 없거나 형식이 잘못된 명령에 대한 응답입니다. 준비 중 오류에는 `command='...'`도 표시됩니다. 기존 실행 기록에서는 `tail -n 15 data/<세션 폴더>/events.csv`로 `ERROR` 직전의 `COMMAND`를 확인하세요. `LICK_END_CAPS`에서 실패하면 Arduino가 보상 후 lick 종료 기능을 지원하는지 확인해야 합니다. 그 기능 이전의 고정 시간 종료 펌웨어는 lick과 무관하게 trial을 진행하므로, 확인 명령만 제거하면 요청한 동작을 보장할 수 없습니다. 이 경우 저장소의 최신 스케치를 Uno에 업로드해야 합니다. `TASK 1`에서 실패한 경우에도 두 task를 지원하는 최신 스케치를 업로드하세요. 세션 시간 제한은 없으며 `SESSION_LIMIT_CAPS`는 보내지 않습니다.
 
 프로그램과 Uno는 중단 명령이나 통신 끊김을 감지하면 출력을 닫도록 설계되어 있습니다. 최초 장치 확인은 동물 없이 진행하고, 30ms 밸브 개방의 실제 보상량과 센서 극성을 확인하세요. 정밀한 자극·DA 동기화는 TTL과 포토다이오드 측정으로 검증해야 합니다.

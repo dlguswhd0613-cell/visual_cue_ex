@@ -1,4 +1,4 @@
-# Visual cue Pavlovian task
+# Headfixed visual cue tasks
 
 고정된 쥐에게 Raspberry Pi 4B의 7인치 화면으로 Gabor 자극을 제시하고, Arduino Uno로 보상 밸브와 lick 센서를 제어합니다. Python 프로그램은 화면과 기록을 담당하고, Arduino는 기존 배선에서 밸브·센서·TTL을 담당합니다. 두 장치는 USB로 연결합니다.
 
@@ -10,6 +10,24 @@
 
 기본 세션은 100회이며 모든 시행에서 보상을 제공합니다. **세션 시간 제한은 없으며, 설정된 모든 시행을 완료하면 종료합니다.** 세션 시작 시 기존 코드와 같은 LED/TTL 시작 신호를 보낸 뒤 최초 대기 90초가 시작됩니다. 이후 각 시행의 시간표는 다음과 같습니다.
 
+`HEADFIXED_PYTHON.py`에서 실행 옵션으로 task를 선택합니다.
+
+| 번호 | 이름 | 실행 옵션 | 보상 시행 종료 조건 |
+|---|---|---|---|
+| 1 | Pavlovian task | `--task 1` 또는 `--task pavlovian` | lick과 관계없이 `reward_at_ms + post_reward_ms`에 종료 |
+| 2 | Operant task | `--task 2` 또는 `--task operant` | 보상 후 첫 유효 lick과 밸브 닫힘을 확인하면 종료 |
+
+`--task`를 생략하면 `session.task`를 사용합니다. 현재 설정과 해당 키가 없는 기존 설정의 기본값은 `operant`입니다. 두 모드 모두 보상은 예정 시각에 제공하며, 여기서 Operant의 lick은 trial 종료 조건입니다. 비보상 시행은 두 모드 모두 `reward_at_ms + post_reward_ms`에 끝납니다.
+
+```bash
+# 1번: Pavlovian
+DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id B67 --task 1 --autostart --exit-when-done
+# 2번: Operant
+DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id B67 --task 2 --autostart --exit-when-done
+```
+
+기존 `--schedule` 옵션도 함께 사용할 수 있습니다. 선택 결과는 터미널에 `Task 1: Pavlovian task` 또는 `Task 2: Operant task`로 표시되며, `metadata.json`의 `task`, `task_number`, `trial_end_rule`에 저장됩니다.
+
 | 시행 시작 기준 | 화면 및 장치 동작 |
 |---|---|
 | 0초 | 시행 시작, 회색 화면 |
@@ -18,21 +36,22 @@
 | 3초 | 자극 종료, 회색 화면 복귀 |
 | 5.9초 | D7 reward 사전 트리거 20ms |
 | 6초 | 자극 종료 예정 시점에서 3초 후, 보상 밸브 30ms 개방 |
-| 보상 후 첫 lick | 밸브가 닫혔다면 즉시 시행 종료; 개방 중 lick이면 30ms 개방 완료 후 종료 |
+| 10초 (1번 Pavlovian) | 보상 6초 + 관찰 4초 후 lick과 관계없이 시행 종료 |
+| 보상 후 첫 lick (2번 Operant) | 밸브가 닫혔다면 즉시 시행 종료; 개방 중 lick이면 30ms 개방 완료 후 종료 |
 | 시행 종료 직후 | 회색 화면에서 ITI 10–20초 시작 (감소하는 지수분포) |
 | ITI 경과 후 | 다음 시행 시작 |
 
-ITI는 **보상 후 lick 조건을 만족해 시행이 종료된 시점부터 다음 시행 시작까지**의 시간입니다. 기본값은 10–20초의 정수 초를 감소하는 지수분포로 선택합니다. 따라서 연속 시행의 시작 간격은 lick 시점에 따라 달라집니다. 예를 들어 시행 시작 후 7초에 첫 보상 후 lick이 감지되고 ITI가 12초라면, 시행은 7초에 끝나고 다음 시행은 19초에 시작합니다. 100회를 마치려면 마지막 시행도 같은 lick 조건을 만족해야 세션이 종료되며, 이후 ITI는 없습니다. 보상 밸브의 30ms는 보상 부피가 아니므로 실제 장치에서 양을 측정해야 합니다.
+ITI는 **trial이 끝난 시점부터 다음 trial 시작까지**의 시간입니다. 기본값은 10–20초의 정수 초를 감소하는 지수분포로 선택합니다. Pavlovian은 현재 설정에서 trial 시작 10초 뒤 종료하므로 ITI가 12초라면 다음 trial은 22초에 시작합니다. Operant에서 trial 시작 7초에 보상 후 첫 lick이 감지되면 다음 trial은 19초에 시작합니다. 마지막 trial 이후에는 ITI 없이 세션이 끝납니다. 보상 밸브의 30ms는 보상 부피가 아니므로 실제 장치에서 양을 측정해야 합니다.
 
-Lick은 D11의 LOW→HIGH 전환으로 감지하고, 직전 감지 이후 50ms 미만의 신호는 제외합니다. 감지할 때마다 터미널에 `LICK: 1`, `LICK: 2`처럼 누적 횟수를 즉시 표시하고, `events.csv`에도 시각과 누적 횟수를 저장합니다. 시행 중과 ITI를 포함해 세션 전체에서 기록합니다. **보상 시작 전 lick은 종료 조건에 포함하지 않으며, 보상 시작 후 첫 유효 lick부터 인정합니다.** 센서가 보상 전부터 계속 HIGH인 경우 새 LOW→HIGH 전환이 필요합니다. 밸브가 열려 있는 동안 감지한 lick도 인정하되 설정된 밸브 개방 시간을 끝까지 유지한 뒤 시행을 종료합니다.
+Lick은 D11의 LOW→HIGH 전환으로 감지하고, 직전 감지 이후 50ms 미만의 신호는 제외합니다. 감지할 때마다 터미널에 `LICK: 1`, `LICK: 2`처럼 누적 횟수를 즉시 표시하고, `events.csv`에도 시각과 누적 횟수를 저장합니다. 시행 중과 ITI를 포함해 세션 전체에서 기록합니다. **Operant에서는 보상 시작 전 lick을 종료 조건에 포함하지 않으며, 보상 시작 후 첫 유효 lick부터 인정합니다.** 센서가 보상 전부터 계속 HIGH인 경우 새 LOW→HIGH 전환이 필요합니다. 밸브가 열려 있는 동안 감지한 lick도 인정하되 설정된 밸브 개방 시간을 끝까지 유지한 뒤 시행을 종료합니다.
 
-**보상 후 lick이 없으면 밸브를 닫고 회색 화면에서 계속 기다립니다.** 자동으로 다음 ITI로 넘어가거나 보상을 다시 주지 않습니다. 터미널의 `WAIT_LICK`은 이 대기 상태이고, lick을 감지하면 `LICK` → `TRIAL_END` → `ITI_START` 순서로 기록됩니다(밸브 개방 중 lick은 밸브 종료 뒤 `TRIAL_END`). STOP·Esc·Ctrl+C 또는 통신 끊김 시에는 중단할 수 있습니다. 비보상 시행(`Rewarded=0`)은 lick을 기다리지 않고 `reward_at_ms + post_reward_ms`에 종료합니다.
+**Operant에서 보상 후 lick이 없으면 밸브를 닫고 회색 화면에서 계속 기다립니다.** 자동으로 다음 ITI로 넘어가거나 보상을 다시 주지 않습니다. 터미널의 `WAIT_LICK`은 이 대기 상태이고, lick을 감지하면 `LICK` → `TRIAL_END` → `ITI_START` 순서로 기록됩니다(밸브 개방 중 lick은 밸브 종료 뒤 `TRIAL_END`). STOP·Esc·Ctrl+C 또는 통신 끊김 시에는 중단할 수 있습니다. 비보상 시행(`Rewarded=0`)은 lick을 기다리지 않고 `reward_at_ms + post_reward_ms`에 종료합니다.
 
 ITI 시작 시 터미널에는 `ITI_START: 2`(다음 시행 번호), `ITI_DURATION_S: 12s`(해당 ITI 길이)처럼 표시됩니다.
 
 **세션 시간 제한은 없습니다.** 설정된 모든 trial을 완료하면 Arduino의 `SESSION_END`로 정상 종료하고, `metadata.json`에 `status: completed`, `end_reason: trial_count`, `completed_trials`를 저장합니다. `--exit-when-done`을 사용하면 정상 종료 뒤 프로그램도 종료됩니다.
 
-시간 제한 제거는 **Pi의 Python만 업데이트하면 됩니다.** 보상 후 lick 종료를 지원하는 Uno 스케치(`771cc24`)를 계속 사용하며, `SESSION_LIMIT_CAPS` 명령은 보내지 않습니다. Python은 기존 `LICK_END_CAPS` 확인을 유지하므로, 더 오래된 고정 시간 종료 펌웨어는 lick 종료 버전으로 업데이트해야 합니다. `metadata.json`의 `trial_end_rule`에도 trial 종료 조건이 저장됩니다.
+**Pavlovian을 선택하려면 Pi의 Python을 업데이트하고 최신 Uno 스케치를 한 번 업로드해야 합니다.** 이후에는 같은 스케치에서 `--task`로 두 모드를 선택합니다. 기존 lick 종료 스케치(`771cc24`)는 Operant를 계속 실행할 수 있지만 Pavlovian 선택 명령(`TASK 1`)을 지원하지 않습니다. 지원하지 않는 task는 준비 단계에서 오류를 표시하고 시작하지 않습니다.
 
 자극 무늬의 예시입니다. 현재 실행 시 위치는 화면 정중앙입니다. 실제 픽셀 크기는 `diameter_px` 설정으로 바뀝니다.
 
@@ -124,12 +143,13 @@ python HEADFIXED_PYTHON.py --config config/experiment.json --port /dev/ttyACM0 -
 
 | `session` 설정 | 기본값 | 의미 |
 |---|---:|---|
+| `task` | `operant` | `pavlovian` 또는 `operant`. `--task` 지정 시 실행 옵션 우선 |
 | `trials` | 100 | 시행 횟수 |
 | `cue_delay_ms` | 1000 | 시행 시작에서 자극 시작까지 |
 | `cue_duration_ms` | 2000 | 자극 표시 시간 |
 | `reward_at_ms` | 6000 | 시행 시작에서 보상 시작까지 |
 | `valve_open_ms` | 30 | 밸브 개방 시간 |
-| `post_reward_ms` | 4000 | 비보상 시행에서 보상 예정 시점 이후 대기 시간. 보상 시행은 lick으로 종료 |
+| `post_reward_ms` | 4000 | Pavlovian 또는 비보상 시행에서 보상 예정 시점 이후 대기 시간. Operant 보상 시행은 lick으로 종료 |
 | `initial_iti_s` | 90 | 시작 신호 뒤 최초 시행까지의 대기 |
 | `iti_min_s`, `iti_max_s` | 10, 20 | 시행 종료 뒤 ITI의 최소·최대 초 (양 끝 포함) |
 | `iti_distribution` | exponential | `exponential`: 감소하는 지수분포, `uniform`: 균등분포 |

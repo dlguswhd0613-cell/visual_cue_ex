@@ -32,6 +32,7 @@ class SimulatedBoard:
         self._simulate_licks = simulate_licks
         self._auto_lick_at: int | None = None
         self._reward_lick = False
+        self._task_mode = 2
         self._last_lick_at = -50
         self._triggers: tuple[int, int, int] | None = None
         self._trigger_edges: dict[str, int] = {}
@@ -84,6 +85,18 @@ class SimulatedBoard:
             return
         if command == "CONFIG":
             self._configure(values)
+        elif command == "TASK":
+            if self._state != "idle":
+                self._error(3)
+            elif len(values) != 1:
+                self._error(1)
+            elif self._config is None:
+                self._error(4)
+            elif values[0] not in (1, 2):
+                self._error(2)
+            else:
+                self._task_mode = values[0]
+                self._emit("TASK_OK", self._task_mode)
         elif command == "TRIGGERS":
             self._configure_triggers(values)
         elif command == "TRIAL":
@@ -112,6 +125,7 @@ class SimulatedBoard:
             self._error(2)
         else:
             self._config = values
+            self._task_mode = 2
             self._triggers = None
             self._trials.clear()
             self._emit("CONFIG_OK", values[0])
@@ -236,7 +250,7 @@ class SimulatedBoard:
         self._last_lick_at = at
         self._lick_count += 1
         self._emit("LICK", self._lick_count, at)
-        if self._state in ("valve", "wait_lick"):
+        if self._task_mode == 2 and self._state in ("valve", "wait_lick"):
             self._reward_lick = True
             if self._state == "wait_lick":
                 self._finish_trial(at)
@@ -323,7 +337,10 @@ class SimulatedBoard:
             elif self._state == "valve":
                 self.valve_on = False
                 self._emit("REWARD_OFF", self._trial, at)
-                if self._reward_lick:
+                if self._task_mode == 1:
+                    self._state = "post_reward"
+                    self._deadline = self._trial_started + self._config[3] + self._config[4]
+                elif self._reward_lick:
                     self._finish_trial(at)
                 else:
                     self._state = "wait_lick"

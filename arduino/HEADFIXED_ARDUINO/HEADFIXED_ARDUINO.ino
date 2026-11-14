@@ -1,5 +1,5 @@
 /*
- * Visual-cue Pavlovian task for Arduino Uno; protocol version 1.
+ * Visual-cue Pavlovian/Operant tasks for Arduino Uno; protocol version 1.
  * Raspberry Pi displays the cue and acknowledges its screen flips. This board
  * controls the existing wiring: buzzer D6 (silent), valve D12, lick D11
  * (INPUT, active HIGH), session LED D10, and event TTL D9.
@@ -8,6 +8,8 @@
  *   HELLO                         -> READY,1 (only while idle)
  *   LICK_END_CAPS                 -> LICK_END_CAPS,1 (rewarded trials wait for lick)
  *   CONFIG n cue_delay_ms cue_ms reward_at_ms post_reward_ms valve_ms initial_iti_s
+ *   TASK mode                     -> TASK_OK,mode; 1=Pavlovian, 2=Operant
+ *     Set after CONFIG while idle. CONFIG resets mode to 2 (legacy lick-end).
  *   TRIGGERS cue_lead_ms reward_lead_ms pulse_ms -> TRIGGERS_OK,2
  *     Optional after CONFIG: shared D7 for cue and reward, active HIGH.
  *     D8 stays LOW. Reward pulses are sent on rewarded trials only.
@@ -35,9 +37,10 @@
  * CONFIG limits: n 1..200; cue delay 0..60000 ms; cue duration 1..60000 ms;
  * reward at 1..60000 ms, strictly greater than cue delay + cue duration;
  * post-reward recording 1..60000 ms and >= valve duration; valve 1..1000 ms;
- * initial ITI 0..65535 s. Rewarded trials end once a post-reward rising lick
+ * initial ITI 0..65535 s. In mode 2, rewarded trials end once a post-reward rising lick
  * edge has been accepted AND the valve pulse has finished. No lick timeout.
- * Nonreward trials end at reward_at + post_reward. Next ITI starts at TRIAL_END.
+ * Mode 1 and nonreward trials end at reward_at + post_reward, regardless of lick.
+ * Both modes deliver scheduled rewards. Next ITI starts at TRIAL_END.
  * TRIAL ITIs: 0..65535 s; rewarded: 0 or 1. First ITI uses CONFIG instead.
  * Defaults belong to the host: 100 trials, cue starts at 1000 ms for 2000 ms,
  * reward at 6000 ms, 30 ms valve, 90 s initial ITI, later ITIs 10..20 s.
@@ -103,6 +106,7 @@ uint32_t lickCount = 0;
 bool configured = false;
 bool lastLickHigh = false;
 bool rewardLickSatisfied = false;
+uint8_t taskMode = 2;
 bool markerOn = false;
 uint8_t completedBlinks = 0;
 char lineBuffer[96];
@@ -191,8 +195,8 @@ void closeRewardIfDue() {
   digitalWrite(PIN_VALVE, LOW);
   digitalWrite(PIN_TTL, LOW);
   logEvent(F("REWARD_OFF"), trialIndex + 1);
-  state = WAIT_REWARD_LICK;
-  if (!rewardLickSatisfied) logEvent(F("WAIT_LICK"), trialIndex + 1);
+  state = taskMode == 1 ? POST_REWARD : WAIT_REWARD_LICK;
+  if (taskMode == 2 && !rewardLickSatisfied) logEvent(F("WAIT_LICK"), trialIndex + 1);
 }
 
 void finishTrial() {
@@ -340,7 +344,15 @@ void handleLine() {
     memset(rewardBits, 0, sizeof(rewardBits));
     triggersEnabled = false;
     configured = true;
+    taskMode = 2;
     logEvent(F("CONFIG_OK"), totalTrials);
+  } else if (strcmp(command, "TASK") == 0) {
+    if (state != IDLE) { protocolError(3); return; }
+    if (!readNumbers(remaining, values, 1)) { protocolError(1); return; }
+    if (!configured) { protocolError(4); return; }
+    if (values[0] < 1 || values[0] > 2) { protocolError(2); return; }
+    taskMode = values[0];
+    logEvent(F("TASK_OK"), taskMode);
   } else if (strcmp(command, "TRIGGERS") == 0) {
     if (state != IDLE) { protocolError(3); return; }
     if (!readNumbers(remaining, values, 3)) { protocolError(1); return; }
@@ -434,7 +446,7 @@ void checkLick() {
   if (high && !lastLickHigh && uint32_t(now - lastLickMs) >= LICK_DEBOUNCE_MS) {
     lastLickMs = now;
     ++lickCount;
-    if (state == VALVE_OPEN || state == WAIT_REWARD_LICK) rewardLickSatisfied = true;
+    if (taskMode == 2 && (state == VALVE_OPEN || state == WAIT_REWARD_LICK)) rewardLickSatisfied = true;
     logEvent(F("LICK"), lickCount);
   }
   lastLickHigh = high;
@@ -517,7 +529,7 @@ void runSession() {
     case WAIT_REWARD_LICK:
       if (rewardLickSatisfied) finishTrial();
       break;
-    case POST_REWARD: // Nonreward trials retain the fixed observation period.
+    case POST_REWARD: // Pavlovian and nonreward trials use the fixed observation period.
       if (uint32_t(now - trialStartedMs) >= uint32_t(rewardAtMs) + postRewardMs) {
         finishTrial();
       }

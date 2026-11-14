@@ -1,6 +1,7 @@
 {
   "serial": {"port": "/dev/ttyACM0", "baud": 115200},
   "session": {
+    "task": "operant",
     "trials": 100,
     "cue_delay_ms": 1000,
     "cue_duration_ms": 2000,

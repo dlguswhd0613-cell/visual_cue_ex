@@ -30,7 +30,7 @@ def validate_config(config):
     if "photometry" in config:
         expected["photometry"] = {"enabled", "cue_lead_ms", "reward_lead_ms", "pulse_ms"}
     for section, keys in expected.items():
-        optional = {"iti_distribution", "iti_exponential_scale_s"} if section == "session" else set()
+        optional = {"task", "iti_distribution", "iti_exponential_scale_s"} if section == "session" else set()
         if (not isinstance(config[section], dict) or not keys <= set(config[section])
                 or set(config[section]) - keys - optional):
             raise ValueError(f"Unexpected or missing keys in {section}; expected {sorted(keys)}")
@@ -47,6 +47,8 @@ def validate_config(config):
                             ("iti_max_s", 0, 65535)):
         integer("session", name, low, high)
     session = config["session"]
+    if session.get("task", "operant") not in ("pavlovian", "operant"):
+        raise ValueError("session.task must be pavlovian or operant")
     if session.get("iti_distribution", "uniform") not in ("uniform", "exponential"):
         raise ValueError("session.iti_distribution must be uniform or exponential")
     scale = session.get("iti_exponential_scale_s", 3.0)

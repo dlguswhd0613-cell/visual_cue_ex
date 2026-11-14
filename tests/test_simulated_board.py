@@ -39,8 +39,9 @@ class SimulatedBoardTests(unittest.TestCase):
     def matching(self, name):
         return [event for event in self.events if event[1] == name]
 
-    def start(self, count=1, rewarded=True, reward_at=9000, triggers=False):
+    def start(self, count=1, rewarded=True, reward_at=9000, triggers=False, task=2):
         self.send(f"CONFIG {count} 1000 2000 {reward_at} 4000 30 0")
+        self.send(f"TASK {task}")
         if triggers:
             self.send("TRIGGERS 100 100 20")
         for index in range(1, count + 1):
@@ -64,6 +65,47 @@ class SimulatedBoardTests(unittest.TestCase):
         self.assertEqual(self.matching("LED_OFF"), [
             (1000, "LED_OFF", 1), (2000, "LED_OFF", 2), (3000, "LED_OFF", 3),
         ])
+
+    def test_pavlovian_ignores_lick_and_starts_iti_at_fixed_end(self):
+        self.start(count=2, task=1, triggers=True)
+        self.finish_cue()
+        self.advance(6000)
+        self.board.inject_lick()  # During the valve pulse; must not end trial.
+        self.advance(3999)
+        self.assertFalse(self.matching("TRIAL_END"))
+        self.advance(1)
+        self.assertEqual(self.matching("TRIAL_END"), [(16000, "TRIAL_END", 1)])
+        self.assertEqual(self.matching("ITI_START")[-1], (16000, "ITI_START", 2))
+        self.assertFalse(self.matching("WAIT_LICK"))
+        self.advance(33000)
+        self.assertEqual(self.matching("TRIAL_START")[-1], (49000, "TRIAL_START", 2))
+        self.advance(1000)
+        self.send("CUE_ON 2")
+        self.advance(2000)
+        self.send("CUE_OFF 2")
+        self.advance(10000)  # No lick on the final trial.
+        self.assertEqual(self.matching("SESSION_END"), [(62000, "SESSION_END", 2)])
+        self.assertFalse(self.board.valve_on or self.board.trigger_on)
+
+    def test_task_selection_validation_and_config_reset(self):
+        self.send("TASK 1")
+        self.assertEqual(self.matching("ERROR")[-1][2], 4)
+        self.send("CONFIG 1 1000 2000 9000 4000 30 0")
+        for value in ("0", "3", "-1", "1 2", ""):
+            self.send("TASK " + value)
+            self.assertIn(self.matching("ERROR")[-1][2], (1, 2))
+        self.send("TASK 1")
+        self.assertEqual(self.matching("TASK_OK")[-1][2], 1)
+        self.send("CONFIG 1 1000 2000 9000 4000 30 0")
+        self.send("TRIAL 1 0 1")
+        self.send("START")
+        self.advance(3000)
+        self.finish_cue()
+        self.advance(6030)
+        self.assertTrue(self.matching("WAIT_LICK"))  # CONFIG restored Operant.
+        self.send("TASK 1")
+        self.assertEqual(self.matching("ERROR")[-1][2], 3)
+        self.assertTrue(self.matching("SESSION_ABORTED"))
 
     def test_photometry_pulses_precede_events_and_repeat_on_next_trial(self):
         self.start(count=2, triggers=True)

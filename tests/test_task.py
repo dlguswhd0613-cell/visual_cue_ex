@@ -81,6 +81,7 @@ class TaskTests(unittest.TestCase):
 
     def test_invalid_timing_and_unknown_key_rejected(self):
         for field, value in (("reward_at_ms", 3000), ("post_reward_ms", 29), ("trials", 201),
+                             ("task", "unknown"), ("task", 1), ("task", None),
                              ("cue_duration_ms", True), ("valve_open_ms", -1),
                              ("iti_distribution", "unknown"), ("iti_exponential_scale_s", 0),
                              ("iti_exponential_scale_s", True), ("iti_exponential_scale_s", float("nan"))):

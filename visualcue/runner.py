@@ -123,6 +123,9 @@ class Experiment:
                 if command == "LICK_END_CAPS":
                     hint = (" Post-reward lick trial endings require the lick-end Uno sketch: "
                             "arduino/HEADFIXED_ARDUINO/HEADFIXED_ARDUINO.ino.")
+                elif command.startswith("TASK "):
+                    hint = (" Upload the task-selectable Uno sketch: "
+                            "arduino/HEADFIXED_ARDUINO/HEADFIXED_ARDUINO.ino.")
                 raise RuntimeError(f"{error}; command={command!r}.{hint}") from error
             for _, kind, actual in replies:
                 if kind == "SESSION_ABORTED":
@@ -144,17 +147,27 @@ class Experiment:
                         raise KeyboardInterrupt
                 time.sleep(.01)
         self.exchange("HELLO", "READY", 1)
-        # Reject older fixed-duration firmware before loading or starting trials.
-        self.exchange("LICK_END_CAPS", "LICK_END_CAPS", 1)
+        task = self.config["session"].get("task", "operant")
+        # CONFIG defaults to Operant on both the lick-end and selectable sketches.
+        if task == "operant":
+            self.exchange("LICK_END_CAPS", "LICK_END_CAPS", 1)
         self.exchange(configuration_command(self.config), "CONFIG_OK", len(self.rows))
+        if task == "pavlovian":
+            self.exchange("TASK 1", "TASK_OK", 1)
         trigger_command = photometry_command(self.config)
         if trigger_command:
             self.exchange(trigger_command, "TRIGGERS_OK", 2)
         for row in self.rows:
             self.exchange(f"TRIAL {row['Trial']} {row['ITI_Duration_S']} {row['Rewarded']}", "TRIAL_OK", row["Trial"])
         self.recording.metadata["status"] = "ready"
-        self.recording.metadata["trial_end_rule"] = "post_reward_lick_and_valve_closed"
+        task_number = 1 if task == "pavlovian" else 2
+        self.recording.metadata["task"] = task
+        self.recording.metadata["task_number"] = task_number
+        self.recording.metadata["trial_end_rule"] = (
+            "reward_at_plus_post_reward" if task == "pavlovian"
+            else "post_reward_lick_and_valve_closed")
         self.recording.save_metadata()
+        print(f"Task {task_number}: {task.capitalize()} task", flush=True)
         print("Ready. SPACE=start, ESC=abort to gray, Q=quit. One session per run.", flush=True)
 
     def start(self):
@@ -261,6 +274,8 @@ def main(argv=None):
     parser.add_argument("--mouse-id", "--mice", dest="mouse_id", default="mouse01")
     parser.add_argument("--outdir", type=Path, default=Path("data"))
     parser.add_argument("--schedule", type=Path)
+    parser.add_argument("--task", choices=("1", "2", "pavlovian", "operant"),
+                        help="1/pavlovian: timed trial end; 2/operant: wait for post-reward lick. Overrides session.task.")
     parser.add_argument("--simulate", action="store_true", help="Use simulated Arduino; no hardware commands")
     parser.add_argument("--demo", action="store_true", help="Simulation only: 3 trials, initial delay 0, ITI 1 s")
     parser.add_argument("--autostart", action="store_true", help="Start after setup without SPACE; real hardware delivers rewards")
@@ -277,6 +292,8 @@ def main(argv=None):
         config = copy.deepcopy(load_config(args.config))
         if args.port:
             config["serial"]["port"] = args.port
+        config["session"]["task"] = ({"1": "pavlovian", "2": "operant"}.get(args.task, args.task)
+                                     if args.task else config["session"].get("task", "operant"))
         if args.demo:
             config["session"].update(trials=3, initial_iti_s=0, iti_min_s=1, iti_max_s=1)
         validate_config(config)
