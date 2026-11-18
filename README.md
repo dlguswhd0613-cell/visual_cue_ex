@@ -4,6 +4,8 @@
 
 처음 설치할 때는 [Raspberry Pi 설치·실행 안내](docs/raspberry_pi.md)를 따라 진행하세요. 클라우드에서 만드는 파일을 실제 Raspberry Pi에 복사하고, 새 Arduino 스케치를 실제 Uno에 업로드해야 장치에서 실행됩니다.
 
+**실험 후 photometry 분석:** [PPD·행동 CSV 시간 정렬 도구](photometry_analysis/README.md)로 매번 입력 파일과 저장 경로를 선택하고, signal·control·dF/F·lick을 같은 시간축에서 확인할 수 있습니다. trial 제외 선택과 dF/F 평균 CSV 저장을 지원합니다.
+
 ## 실험 동작
 
 대기·시행 사이·실험 종료 후에는 회색 화면이 유지됩니다. 자극은 화면 정중앙(가로 50%, 세로 50%)에 놓인 원형 Gabor 패치이며, 흑백 줄무늬가 공간상으로 번갈아 배치된 **정지 무늬**입니다. 움직임이나 깜빡임은 없습니다. 가장자리는 Gaussian 형태로 회색 배경에 부드럽게 섞입니다.
