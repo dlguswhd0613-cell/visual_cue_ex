@@ -36,6 +36,10 @@ def save_comparisons(out, trials, time, matrices, include, average):
         curves, support = comparison_curves(matrices[metric], include, labels, average)
         for name, color in zip(STAGES, colors):
             mean, sem, count, n = curves[name]
+            if metric == 'f0_v' and n:
+                reference = matrices[metric][np.isfinite(matrices[metric])][0]
+                mean[np.isfinite(mean)] = reference
+                sem[np.isfinite(sem)] = 0.
             ax.plot(time[support], mean[support], color=color, label=f'{name} (n={n})')
             ax.fill_between(time[support], (mean-sem)[support], (mean+sem)[support], color=color, alpha=.15)
             for j in np.flatnonzero(support & np.isfinite(mean)):

@@ -125,21 +125,26 @@ class AlignmentTests(unittest.TestCase):
                 np.testing.assert_array_equal(cropped['time'],data['time'][crop])
                 np.testing.assert_array_equal(cropped['analog_2'],data['analog_2'][crop])
                 self.assertTrue(kwargs['return_components'])
-                return {'signal_norm':dff[crop], 'signal_expfit':np.full(crop.sum(),2.)}
+                self.assertIsNone(kwargs['normalisation'])
+                # A varying bleach curve must produce one constant denominator.
+                return {'signal_mc':dff[crop]*.02,
+                        'signal_expfit':np.linspace(3.,1.,crop.sum())}
             with patch('align_photometry.import_ppd',return_value=data), \
                     patch('align_photometry.preprocess_data',side_effect=preprocess), redirect_stdout(io.StringIO()):
                 qc=run(args)
             self.assertEqual(qc['matched_ttl_count'],4)
             self.assertEqual(qc['complete_behavior_trials'],2)
             self.assertEqual(qc['included_trials'],1)
+            self.assertAlmostEqual(qc['session_f0_v'],2.)
             self.assertEqual(qc['lick_events_in_session'],3)
             self.assertEqual(qc['lick_events_in_trials'],2)
             self.assertEqual(qc['missing_start_photometry_s'],0)
             with np.load(out/'processed_data.npz') as raw:
                 idx=raw['ppd_sample_index']
-                np.testing.assert_array_equal(raw['dff_percent'],dff[idx])
+                np.testing.assert_allclose(raw['dff_percent'],dff[idx],atol=1e-14)
                 self.assertNotIn('original_ppd_dff_percent',raw.files)
                 np.testing.assert_array_equal(raw['f0_v'],np.full(crop.sum(),2.))
+                self.assertGreater(np.ptp(raw['bleaching_fit_v']),1.)
                 self.assertGreaterEqual(raw['time_ppd_s'][0],a+b)
                 np.testing.assert_allclose(raw['time_ppd_s'],idx/fs)
                 np.testing.assert_allclose(raw['time_session_s'],raw['time_ppd_s']-(a+b))

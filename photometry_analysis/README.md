@@ -69,7 +69,7 @@ Arduino reset/rollover 또는 여러 SESSION_START가 섞인 기록은 먼저 �
 
 ## 전처리, 세션 자르기, 평균
 
-`data_import.py`의 원본 전처리 계산식을 사용하며, F₀를 함께 반환하는 선택 옵션을 추가했습니다. 기본 signal은 `analog_2`,
+`data_import.py`의 필터링·bleaching·motion 보정을 사용하며, 반환된 보정 신호를 세션 공통 F₀로 나눕니다. 기본 signal은 `analog_2`,
 control은 `analog_1`이며, 20Hz 저역통과 → 이중 지수 bleaching 보정 → control 선형회귀 motion
 보정 → dF/F 계산 순서입니다. **dF/F 단위는 %**이며 이미 100을 곱한 값입니다.
 원본 전처리 함수가 `analog_*_filt`를 사용하지 않으므로 추가 0.01Hz high-pass를 적용하지 않습니다.
@@ -95,7 +95,7 @@ SEM은 trial 간 표본 표준편차 / sqrt(N)입니다. N=1이면 SEM을 비우
 | `review.html` | 공통 시간축, 개별 trial, 제외 선택, 평균 CSV 다운로드 |
 | `processed_data.csv` | 잘라낸 세션의 signal/control/dF/F/F₀/lick, 시간, trial 번호 |
 | `trials_only.csv` | trial 안 샘플만 선택. 원래 시간축 유지, ITI 미포함 |
-| `processed_data.npz` | 실험 구간의 배열만 저장. `f0_v`는 원래 샘플링 주파수의 기준 형광. 세션 밖은 처리하지 않음 |
+| `processed_data.npz` | 실험 구간의 배열만 저장. `f0_v`는 모든 샘플에서 같은 공통 분모, `bleaching_fit_v`는 시간에 따라 변하는 bleaching 보정 곡선 |
 | `events_aligned.csv`, `events_session.csv` | 전체 이벤트 및 세션 구간 이벤트의 정렬 시각 |
 | `lick_events.csv` | 정확한 lick 정렬 시각, trial 번호, PPD 포함 여부 |
 | `trial_summary.csv` | trial별 시작/끝, 평균 dF/F, lick 수, 평균 포함 여부 |
@@ -142,8 +142,21 @@ py align_photometry.py --ppd "D:\recordings\mouse01.ppd" --events "D:\behavior\e
 - **세 곡선 비교:** dF/F (%)가 기본이며 F₀ (V) 또는 Signal (V)도 선택할 수 있습니다. 각 trial의 같은 상대 시각을 동일 가중치로 평균합니다. 세 그룹 모두 포함 trial 전체의 공통 시간 구간을 사용합니다. N=0은 빈 곡선, N=1은 SEM 없음으로 표시합니다.
 - **Trial별 변화:** 지정한 trial 내 시간 구간의 평균을 trial마다 점으로 표시합니다. 그 시간 범위를 끝까지 기록하지 못한 trial은 점에서 제외합니다. 동일한 관찰 구간으로 진행에 따른 반응을 비교할 수 있습니다.
 
-trial 번호 범위는 선택 평균에만 적용되며, 세 그룹 비교는 전체 trial과 제외 목록을 사용합니다. 기본 trial 내 시간 범위는 전체 완전한 trial이 겹치는 구간입니다. 범위를 더 늘리면 세 그룹 평균은 공통 데이터 구간에서만 표시됩니다. F₀는 세션 전체에서 한 번 추정하며 그룹이나 선택 구간마다 재추정하지 않습니다.
+trial 번호 범위는 선택 평균에만 적용되며, 세 그룹 비교는 전체 trial과 제외 목록을 사용합니다. 기본 trial 내 시간 범위는 전체 완전한 trial이 겹치는 구간입니다. 범위를 더 늘리면 세 그룹 평균은 공통 데이터 구간에서만 표시됩니다. F₀는 잘라낸 세션 전체의 exponential 추정값을 평균한 단일 상수이며, 모든 시점·trial·그룹에서 동일합니다. ITI도 평균 범위에 포함되며 trial 제외나 선택 구간 변경으로 재계산하지 않습니다.
 
 `early_middle_late.csv`, `.png`, `.svg`에는 최초 제외 목록으로 계산한 세 그룹 비교가 저장됩니다. PNG/SVG는 dF/F·F₀·Signal을 각각 별도 축에 표시하며, 각 축 안에 세 그룹 곡선이 겹쳐집니다. HTML에서 변경한 선택은 비교 평균·trial별 구간 평균 CSV로 별도 저장하세요.
 
 `trial_comparison.py`는 그룹 지정과 정적 결과 저장을, `trial_comparison.js`는 HTML의 범위 선택·비교·다운로드를 담당합니다. `trial_summary.csv`에는 고정 그룹 `stage`, `mean_f0_v`, `mean_signal_v`도 포함됩니다. 전처리 범위와 그룹 규칙은 `alignment_qc.json`에 기록됩니다.
+
+## 세션 내 공통 분모
+
+한 세션에서는 다음과 같이 하나의 F₀를 고정합니다.
+
+```python
+session_f0 = np.mean(signal_expfit)  # 잘라낸 실험 구간 전체, ITI 포함
+processed = 100 * signal_mc / session_f0
+```
+
+`signal_mc`는 시간에 따라 변하는 exponential 곡선을 차감하고 motion을 보정한 신호입니다. 그 차감 곡선은 `bleaching_fit_v`에 저장하며, 분모 `f0_v`와 구별합니다. 세 그룹을 별도로 정규화하지 않으므로 같은 크기의 보정 신호는 early/middle/late 어디서나 같은 dF/F 값으로 표현됩니다. `alignment_qc.json`의 `session_f0_v`와 HTML의 처리 기준에 실제 공통 분모를 표시합니다.
+
+이 정규화는 원본의 시간별 `signal_expfit(t)`로 나누는 방식에서 변경된 것입니다. `data_import.py`를 단독으로 기본 옵션으로 호출하면 원본 방식이 유지되며, 이 분석 프로그램은 `normalisation=None`으로 보정 신호를 얻어 위 공통 분모를 적용합니다. 이전 결과를 사용하려면 새 코드로 재분석해야 합니다.

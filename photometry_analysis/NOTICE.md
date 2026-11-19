@@ -4,7 +4,7 @@ This photometry analysis directory is distributed under the GNU General Public
 License, version 3. See [COPYING](COPYING) for the license text.
 
 `data_import.py` is the pyPhotometry utility supplied with the analysis request.
-Local changes: line endings normalized to LF; optional return_components argument added to expose F0 and corrected signal. The default return and preprocessing formulas are preserved. The analysis caller now crops to the behavior session before preprocessing. Its original notice is preserved:
+Local changes: line endings normalized to LF; optional return_components argument added to expose F0 and corrected signal. The default return and preprocessing formulas are preserved. The analysis caller crops to the behavior session before preprocessing and normalizes the corrected signal by one constant mean exponential fit across that session. Its original notice is preserved:
 
 > Copyright (c) Thomas Akam 2018-2025. Licenced under the GNU General Public License v3.
 

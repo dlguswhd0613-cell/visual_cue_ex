@@ -213,14 +213,18 @@ def run(args):
             cropped[key] = value[mask]
     try:
         components = preprocess_data(cropped, signal=args.signal, control=args.control,
-                                     low_pass=args.low_pass, normalisation='dF/F', plot=False,
+                                     low_pass=args.low_pass, normalisation=None, plot=False,
                                      return_components=True)
     except (ValueError, RuntimeError) as error:
         raise ValueError(f'Session-only preprocessing failed (available duration {mask.sum()/fs:.3f}s): {error}') from error
     processed = np.full(ppd_time.shape, np.nan)
     f0 = np.full(ppd_time.shape, np.nan)
-    processed[mask] = components['signal_norm']
-    f0[mask] = components['signal_expfit']
+    # One denominator for every sample/trial, including all ITIs in the cropped session.
+    session_f0 = float(np.mean(components['signal_expfit']))
+    if not np.isfinite(session_f0) or session_f0 <= 0:
+        raise ValueError('The session-wide mean exponential fit must be finite and positive.')
+    processed[mask] = 100 * components['signal_mc'] / session_f0
+    f0[mask] = session_f0
     if not np.all(np.isfinite(processed[mask])) or not np.all(np.isfinite(f0[mask])) or np.any(f0[mask] <= 0):
         raise ValueError('Session preprocessing must return finite dF/F and positive F0 per sample.')
     selected_time = ppd_time[mask]
@@ -238,7 +242,8 @@ def run(args):
     session = pd.DataFrame({'ppd_sample_index': np.flatnonzero(mask), 'time_ppd_s': selected_time,
                             'time_session_s': selected_time-origin,
                             'signal_v': data[args.signal][mask], 'control_v': data[args.control][mask],
-                            'dff_percent': processed[mask], 'f0_v': f0[mask], 'lick_count': lick_count[mask],
+                            'dff_percent': processed[mask], 'f0_v': f0[mask],
+                            'bleaching_fit_v': components['signal_expfit'], 'lick_count': lick_count[mask],
                             'digital_1': data['digital_1'][mask], 'digital_2': data['digital_2'][mask],
                             'trial_id': all_trial_ids[mask]})
     relative_time = np.arange(int(np.floor((ends-starts).max()*fs)) + 1) / fs
@@ -258,7 +263,7 @@ def run(args):
                'exclusion_reason': 'user' if trial_id in excluded else ('' if full else 'incomplete_photometry'),
                'native_sample_count': int(native.sum()),
                'mean_dff_percent': float(np.mean(processed[native])) if native.any() else np.nan,
-               'mean_f0_v': float(np.mean(f0[native])) if native.any() else np.nan,
+               'mean_f0_v': session_f0 if native.any() else np.nan,
                'mean_signal_v': float(np.mean(data[args.signal][native])) if native.any() else np.nan,
                'lick_count': int((licks.trial_id == trial_id).sum())}
         for event, column in [('CUE_ON','cue_relative_s'), ('CUE_OFF','cue_off_relative_s'), ('REWARD_ON','reward_relative_s')]:
@@ -290,8 +295,10 @@ def run(args):
           'lick_events_in_session': len(licks), 'lick_events_in_trials': int((licks.trial_id > 0).sum()),
           'signal_channel': args.signal, 'control_channel': args.control, 'low_pass_hz': args.low_pass,
           'preprocessing': 'Supplied preprocess_data: lowpass -> double-exponential bleaching correction '
-                           '-> control linear regression -> 100 * corrected_signal / signal_expfit.',
-          'normalisation': 'dF/F percent; no extra per-trial baseline subtraction',
+                           '-> control linear regression -> 100 * corrected_signal / mean(session_signal_expfit).',
+          'normalisation': 'dF/F percent with one constant session denominator; no extra per-trial baseline subtraction',
+          'session_f0_v': session_f0,
+          'denominator_scope': 'Mean exponential fit over all recorded samples in the cropped session, including ITIs; fixed before trial exclusions and group selection.',
           'fit_scope': 'SESSION_START through last completed TRIAL_END, cropped BEFORE filtering and all fits; trial exclusions affect averages only.',
           'preprocessing_window_ppd_s': [float(selected_time[0]), float(selected_time[-1])],
           'stage_definition': 'Chronological completed trials before exclusions: floor(N/3), floor(2N/3); 100 -> 33/33/34.',
@@ -332,6 +339,7 @@ def run(args):
     template = Path(__file__).with_name('review_template.html').read_text(encoding='utf-8')
     template = template.replace('__COMPARISON_SCRIPT__', Path(__file__).with_name('trial_comparison.js').read_text(encoding='utf-8'))
     safe_payload = json_safe(payload)
+    safe_payload['qc']['session_f0_v'] = session_f0
     safe_payload['session_means'] = payload['session_means']  # Preserve precision for differences of cumulative sums.
     blob = json.dumps(safe_payload, ensure_ascii=False, separators=(',',':'), allow_nan=False).replace('</', '<\\/')
     (out/'review.html').write_text(template.replace('__ANALYSIS_DATA__', blob), encoding='utf-8')
