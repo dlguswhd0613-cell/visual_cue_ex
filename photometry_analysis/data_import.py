@@ -153,6 +153,7 @@ def preprocess_data(
     plot=False,
     fig_path=None,
     return_components=False,
+    method="exponential",
 ):
     """Preprocess photometry data by applyling the following steps in order:
 
@@ -177,12 +178,18 @@ def preprocess_data(
         normalisation : Type of normalisation to apply; 'dF/F', 'z-score' or None.
         plot : Set True to plot raw and processed signals.
         fig_path : Specify a file path (including file extension) to save the plotted figure.
+        method : 'exponential' for bleaching subtraction before regression, or
+                 'control_fit' to regress filtered control directly onto filtered signal.
     Returns:
         signal_norm : Numpy array containing the signal after preprocessing and normalisation.
         With return_components=True, returns a dict containing signal_norm,
-        signal_expfit (F0), control_expfit, and signal_mc at the input sample rate.
+        signal_expfit, control_expfit, signal_mc, est_motion and normalisation_f0.
+        In control_fit mode, exponential components are None; normalisation_f0
+        is the time-varying fitted control reference at the input sample rate.
     """
     assert normalisation in ("dF/F", "z-score", None), "normalisation must be 'dF/F', 'z-score' or None"
+    if method not in ("exponential", "control_fit"):
+        raise ValueError("method must be 'exponential' or 'control_fit'")
     if data_dict:  # Extract variables from data dict.
         signal = data_dict[signal]
         control = data_dict[control]
@@ -197,17 +204,25 @@ def preprocess_data(
         control_filt = filtfilt(b, a, control)
     # Photobleaching correction by subtracting double exponential fit.
     t = np.arange(len(signal)) / sampling_rate
-    signal_expfit = _fit_exponential(signal_filt, t, sampling_rate)
-    control_expfit = _fit_exponential(control_filt, t, sampling_rate)
-    signal_bc = signal_filt - signal_expfit
-    control_bc = control_filt - control_expfit
+    signal_expfit = control_expfit = None
+    if method == "control_fit":
+        signal_bc = signal_filt
+        control_bc = control_filt
+    else:
+        signal_expfit = _fit_exponential(signal_filt, t, sampling_rate)
+        control_expfit = _fit_exponential(control_filt, t, sampling_rate)
+        signal_bc = signal_filt - signal_expfit
+        control_bc = control_filt - control_expfit
     # Motion correction.
     slope, intercept, r_value, p_value, std_err = linregress(x=control_bc, y=signal_bc)
     est_motion = intercept + slope * control_bc
     signal_mc = signal_bc - est_motion
+    normalisation_f0 = est_motion if method == "control_fit" else signal_expfit
     # Normalisation.
     if normalisation == "dF/F":
-        signal_norm = 100 * signal_mc / signal_expfit
+        if not np.all(np.isfinite(normalisation_f0)) or np.any(normalisation_f0 <= 0):
+            raise PreprocessingError("dF/F denominator must be finite and positive at every sample.")
+        signal_norm = 100 * signal_mc / normalisation_f0
     elif normalisation == "z-score":
         signal_norm = zscore(signal_mc)
     else:
@@ -219,9 +234,10 @@ def preprocess_data(
         ax1 = plt.subplot(2, 3, (1, 2))
         ds = int(sampling_rate / low_pass)  # Amount to decimate signals before plotting.
         plt.plot(t[::ds], signal[::ds], label="Signal")
-        plt.plot(t[::ds], signal_expfit[::ds], "k")
+        plt.plot(t[::ds], normalisation_f0[::ds], "k", label="dF/F reference")
         plt.plot(t[::ds], control[::ds], label="Control")
-        plt.plot(t[::ds], control_expfit[::ds], "k")
+        if control_expfit is not None:
+            plt.plot(t[::ds], control_expfit[::ds], "k")
         plt.legend(loc="upper right")
         plt.ylabel("Raw signal (Volts)")
         plt.xlim(0, t[-1])
@@ -240,8 +256,8 @@ def preprocess_data(
         plt.ylim(2 * np.percentile(signal_bc_dec, [1, 99]))
         x = np.array(plt.xlim())
         plt.plot(x, intercept + slope * x)
-        plt.xlabel("Control (post bleaching correction)")
-        plt.ylabel("Signal (post bleaching correction)")
+        plt.xlabel("Filtered control" if method == "control_fit" else "Control (post bleaching correction)")
+        plt.ylabel("Filtered signal" if method == "control_fit" else "Signal (post bleaching correction)")
         ax2.text(x=0.05, y=0.95, s=f"slope: {slope :.2f}", transform=ax2.transAxes)
         plt.subplot(2, 3, 6)
         plt.plot(t[: 10 * sampling_rate], signal_norm[: 10 * sampling_rate])
@@ -254,7 +270,8 @@ def preprocess_data(
             plt.close(fig)
     if return_components:
         return dict(signal_norm=signal_norm, signal_expfit=signal_expfit,
-                    control_expfit=control_expfit, signal_mc=signal_mc)
+                    control_expfit=control_expfit, signal_mc=signal_mc,
+                    est_motion=est_motion, normalisation_f0=normalisation_f0)
     return signal_norm
 
 

@@ -81,7 +81,7 @@ function renderWindowMean(){
   const first=Math.max(0,Math.min(size,Math.ceil((range[0]-start_s)*fs-1e-7)));
   const end=Math.max(0,Math.min(size,Math.floor((range[1]-start_s)*fs+1e-7)+1));
   const n=Math.max(0,end-first),means={};
-  for(const key of Object.keys(metricNames))means[key]=n?(key==='f0_v'?Q.session_f0_v:(prefix[key][end]-prefix[key][first])/n):null;
+  for(const key of Object.keys(metricNames))means[key]=n?(key==='f0_v'&&finite(Q.session_f0_v)?Q.session_f0_v:(prefix[key][end]-prefix[key][first])/n):null;
   $('windowMean').textContent=`표시 구간 ${fmt(range[0])}–${fmt(range[1])}초의 실제 샘플 ${n}개 평균: `+Object.entries(means).map(([k,v])=>`${metricNames[k]} = ${fmt(v,6)}`).join(' · ');
   return{start:range[0],end:range[1],n,...means};
 }

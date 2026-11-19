@@ -23,6 +23,7 @@ run_analysis.bat
 2. 같은 세션의 `events.csv` 파일
 3. 결과를 저장할 폴더
 4. 평균에서 제외할 trial 번호: 예를 들어 `3,7,12-15`. 빈칸이면 전체 포함
+5. dF/F 계산 방법: 1번(기존 공통 F₀, 기본값) 또는 2번(control 회귀값으로 나누기)
 
 결과는 선택한 저장 폴더 아래 `PPD이름_aligned_분석시각`이라는 새 폴더에 저장됩니다.
 입력 데이터는 직접 지정하며, 다른 세션의 제외 목록을 자동으로 재사용하지 않습니다.
@@ -148,7 +149,7 @@ trial 번호 범위는 선택 평균에만 적용되며, 세 그룹 비교는 �
 
 `trial_comparison.py`는 그룹 지정과 정적 결과 저장을, `trial_comparison.js`는 HTML의 범위 선택·비교·다운로드를 담당합니다. `trial_summary.csv`에는 고정 그룹 `stage`, `mean_f0_v`, `mean_signal_v`도 포함됩니다. 전처리 범위와 그룹 규칙은 `alignment_qc.json`에 기록됩니다.
 
-## 세션 내 공통 분모
+## 1번 방법의 세션 내 공통 분모
 
 한 세션에서는 다음과 같이 하나의 F₀를 고정합니다.
 
@@ -160,3 +161,26 @@ processed = 100 * signal_mc / session_f0
 `signal_mc`는 시간에 따라 변하는 exponential 곡선을 차감하고 motion을 보정한 신호입니다. 그 차감 곡선은 `bleaching_fit_v`에 저장하며, 분모 `f0_v`와 구별합니다. 세 그룹을 별도로 정규화하지 않으므로 같은 크기의 보정 신호는 early/middle/late 어디서나 같은 dF/F 값으로 표현됩니다. `alignment_qc.json`의 `session_f0_v`와 HTML의 처리 기준에 실제 공통 분모를 표시합니다.
 
 이 정규화는 원본의 시간별 `signal_expfit(t)`로 나누는 방식에서 변경된 것입니다. `data_import.py`를 단독으로 기본 옵션으로 호출하면 원본 방식이 유지되며, 이 분석 프로그램은 `normalisation=None`으로 보정 신호를 얻어 위 공통 분모를 적용합니다. 이전 결과를 사용하려면 새 코드로 재분석해야 합니다.
+
+## 2번 방법: 필터링된 control 회귀로 dF/F 계산
+
+파일 선택창 마지막 단계에서 **2**를 입력하면 아래 계산을 사용합니다. 1번 방법이 기본값이며, 문서의 세션 공통 분모 설명은 1번에 해당합니다.
+
+```python
+slope, intercept, *_ = linregress(x=control_filt, y=signal_filt)
+est_motion = intercept + slope * control_filt
+signal_mc = signal_filt - est_motion
+dff_percent = 100 * signal_mc / est_motion
+```
+
+실험 구간으로 먼저 자른 뒤 signal/control을 저역통과 필터링합니다. 회귀는 잘라낸 세션 전체에서 한 번 수행합니다. 이 방법에는 exponential fitting과 bleaching 곡선 차감이 없으며, 분모는 시간에 따라 변하는 회귀값입니다. `f0_v`와 `control_fit_v`에 그 값을 저장합니다. `alignment_qc.json`에는 `method: control_fit`, `session_f0_v: null`과 처리 방법을 기록합니다. 그림의 F₀ 비교도 실제 회귀값으로 계산합니다. 분모가 0 이하이거나 유한하지 않은 경우 설명과 함께 중단합니다.
+
+`data_import.py`를 직접 사용할 때는 `preprocess_data(..., method='control_fit', normalisation='dF/F')`로 같은 값을 얻습니다. `normalisation=None`은 보정 신호만 반환합니다. 계산법은 trial 제외나 구간 선택 후에도 유지됩니다.
+
+명령줄에서는 `align_photometry.py`의 기존 파일 경로 옵션에 `--method control_fit`을 추가합니다.
+
+```cmd
+py align_photometry.py --ppd "D:\recordings\mouse01.ppd" --events "D:\behavior\events.csv" --out "D:\analysis\control_fit" --method control_fit
+```
+
+직접 수정한 코드에 `control_flit`, `signal_flit`이 있으면 각각 `control_filt`, `signal_filt`로 고쳐야 합니다. 새 분석 경로는 반환된 `est_motion`으로 dF/F를 계산하므로, exponential 결과가 없는 상태에서도 GUI 실행과 결과 저장이 가능합니다.

@@ -26,7 +26,7 @@ def comparison_curves(matrix, include, labels, average):
     return result, support
 
 
-def save_comparisons(out, trials, time, matrices, include, average):
+def save_comparisons(out, trials, time, matrices, include, average, constant_f0=None):
     import matplotlib.pyplot as plt
     labels = trials.stage.to_numpy()
     colors = ('#18755f', '#b47720', '#8756aa')
@@ -36,9 +36,8 @@ def save_comparisons(out, trials, time, matrices, include, average):
         curves, support = comparison_curves(matrices[metric], include, labels, average)
         for name, color in zip(STAGES, colors):
             mean, sem, count, n = curves[name]
-            if metric == 'f0_v' and n:
-                reference = matrices[metric][np.isfinite(matrices[metric])][0]
-                mean[np.isfinite(mean)] = reference
+            if metric == 'f0_v' and n and constant_f0 is not None:
+                mean[np.isfinite(mean)] = constant_f0
                 sem[np.isfinite(sem)] = 0.
             ax.plot(time[support], mean[support], color=color, label=f'{name} (n={n})')
             ax.fill_between(time[support], (mean-sem)[support], (mean+sem)[support], color=color, alpha=.15)

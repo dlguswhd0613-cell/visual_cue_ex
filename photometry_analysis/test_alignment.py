@@ -43,6 +43,7 @@ class AlignmentTests(unittest.TestCase):
                     '/tmp/first recording.ppd','/tmp/first events.csv','/tmp/second.ppd','/tmp/second.csv']), \
                 patch('tkinter.filedialog.askdirectory',return_value=directory), \
                 patch('tkinter.simpledialog.askstring',side_effect=['3,7','']), \
+                patch('tkinter.simpledialog.askinteger',side_effect=[2,1]), \
                 patch('tkinter.messagebox.showinfo'), patch('webbrowser.open'), \
                 patch('align_photometry.run') as process:
             self.assertEqual(choose_and_run(),0)
@@ -53,6 +54,8 @@ class AlignmentTests(unittest.TestCase):
             self.assertEqual(first.exclude_trials,'3,7')
             self.assertEqual(second.ppd,'/tmp/second.ppd')
             self.assertEqual(second.exclude_trials,'')
+            self.assertEqual(first.method,'control_fit')
+            self.assertEqual(second.method,'session_f0')
             self.assertNotEqual(first.out,second.out)
             self.assertEqual(Path(first.out).parent,Path(directory))
 
@@ -126,6 +129,8 @@ class AlignmentTests(unittest.TestCase):
                 np.testing.assert_array_equal(cropped['analog_2'],data['analog_2'][crop])
                 self.assertTrue(kwargs['return_components'])
                 self.assertIsNone(kwargs['normalisation'])
+                if kwargs['method']=='control_fit':
+                    return {'signal_mc':dff[crop]*.02, 'est_motion':np.linspace(3.,1.,crop.sum())}
                 # A varying bleach curve must produce one constant denominator.
                 return {'signal_mc':dff[crop]*.02,
                         'signal_expfit':np.linspace(3.,1.,crop.sum())}
@@ -170,6 +175,23 @@ class AlignmentTests(unittest.TestCase):
             self.assertIn('window.reviewAPI',report)
             self.assertNotIn('__COMPARISON_SCRIPT__',report)
             self.assertTrue((out/'early_middle_late.csv').exists())
+            args.method='control_fit'
+            args.out=root/'control_results'
+            with patch('align_photometry.import_ppd',return_value=data), \
+                    patch('align_photometry.preprocess_data',side_effect=preprocess), redirect_stdout(io.StringIO()):
+                qc=run(args)
+            self.assertEqual(qc['method'],'control_fit')
+            self.assertIsNone(qc['session_f0_v'])
+            with np.load(args.out/'processed_data.npz') as raw:
+                reference=np.linspace(3.,1.,crop.sum())
+                np.testing.assert_allclose(raw['dff_percent'],100*dff[crop]*.02/reference)
+                np.testing.assert_array_equal(raw['f0_v'],reference)
+                np.testing.assert_array_equal(raw['control_fit_v'],reference)
+                self.assertNotIn('bleaching_fit_v',raw.files)
+            group_data=pd.read_csv(args.out/'early_middle_late.csv')
+            ref=group_data[group_data.metric=='f0_v']['mean']
+            self.assertGreater(ref.max()-ref.min(),.1)
+
 
 
 if __name__=='__main__':

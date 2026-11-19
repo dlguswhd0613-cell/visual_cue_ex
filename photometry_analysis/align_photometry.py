@@ -171,6 +171,9 @@ def make_plots(out, session, licks, trials, relative_time, matrix, include, pair
 
 def run(args):
     out = Path(args.out)
+    method = getattr(args, 'method', 'session_f0')
+    if method not in ('session_f0', 'control_fit'):
+        raise ValueError('method must be session_f0 or control_fit')
     events = pd.read_csv(args.events, dtype={'Value': str})
     events['Arduino_ms'] = pd.to_numeric(events.Arduino_ms, errors='coerce')
     board = events[(events.Source == 'arduino') & events.Arduino_ms.notna()]
@@ -214,19 +217,26 @@ def run(args):
     try:
         components = preprocess_data(cropped, signal=args.signal, control=args.control,
                                      low_pass=args.low_pass, normalisation=None, plot=False,
-                                     return_components=True)
+                                     return_components=True,
+                                     method='control_fit' if method == 'control_fit' else 'exponential')
     except (ValueError, RuntimeError) as error:
         raise ValueError(f'Session-only preprocessing failed (available duration {mask.sum()/fs:.3f}s): {error}') from error
     processed = np.full(ppd_time.shape, np.nan)
     f0 = np.full(ppd_time.shape, np.nan)
-    # One denominator for every sample/trial, including all ITIs in the cropped session.
-    session_f0 = float(np.mean(components['signal_expfit']))
-    if not np.isfinite(session_f0) or session_f0 <= 0:
-        raise ValueError('The session-wide mean exponential fit must be finite and positive.')
-    processed[mask] = 100 * components['signal_mc'] / session_f0
-    f0[mask] = session_f0
-    if not np.all(np.isfinite(processed[mask])) or not np.all(np.isfinite(f0[mask])) or np.any(f0[mask] <= 0):
-        raise ValueError('Session preprocessing must return finite dF/F and positive F0 per sample.')
+    session_f0 = None
+    if method == 'control_fit':
+        f0[mask] = components['est_motion']
+        preprocessing_description = f'{args.low_pass:g}Hz 저역통과 → 필터링된 control을 signal에 선형회귀 → 100 × (signal_filt − 회귀값) / 회귀값. 분모는 시간에 따라 변합니다.'
+    else:
+        # Include all recorded samples and ITIs in one session denominator.
+        session_f0 = float(np.mean(components['signal_expfit']))
+        f0[mask] = session_f0
+        preprocessing_description = '저역통과 → exponential bleaching 보정 → control 회귀 motion 보정 → 100 × 보정 신호 / 세션 전체 exponential 추정값 평균. 모든 시점에 같은 분모를 적용합니다.'
+    if not np.all(np.isfinite(f0[mask])) or np.any(f0[mask] <= 0):
+        raise ValueError('dF/F denominator must be finite and positive at every sample. Check signal/control selection and fitted reference.')
+    processed[mask] = 100 * components['signal_mc'] / f0[mask]
+    if not np.all(np.isfinite(processed[mask])):
+        raise ValueError('Session preprocessing must return finite dF/F per sample.')
     selected_time = ppd_time[mask]
     all_trial_ids = assign_trials(ppd_time, starts, ends, ids)
     events['time_ppd_s'] = map_time(events.Arduino_ms)
@@ -243,9 +253,13 @@ def run(args):
                             'time_session_s': selected_time-origin,
                             'signal_v': data[args.signal][mask], 'control_v': data[args.control][mask],
                             'dff_percent': processed[mask], 'f0_v': f0[mask],
-                            'bleaching_fit_v': components['signal_expfit'], 'lick_count': lick_count[mask],
+                            'lick_count': lick_count[mask],
                             'digital_1': data['digital_1'][mask], 'digital_2': data['digital_2'][mask],
                             'trial_id': all_trial_ids[mask]})
+    if method == 'control_fit':
+        session['control_fit_v'] = f0[mask]
+    else:
+        session['bleaching_fit_v'] = components['signal_expfit']
     relative_time = np.arange(int(np.floor((ends-starts).max()*fs)) + 1) / fs
     matrices = {key: np.full((len(ids), len(relative_time)), np.nan) for key in ('signal_v','control_v','dff_percent','f0_v')}
     signals = {'signal_v': data[args.signal], 'control_v': data[args.control], 'dff_percent': processed, 'f0_v': f0}
@@ -263,7 +277,7 @@ def run(args):
                'exclusion_reason': 'user' if trial_id in excluded else ('' if full else 'incomplete_photometry'),
                'native_sample_count': int(native.sum()),
                'mean_dff_percent': float(np.mean(processed[native])) if native.any() else np.nan,
-               'mean_f0_v': session_f0 if native.any() else np.nan,
+               'mean_f0_v': (session_f0 if session_f0 is not None else float(np.mean(f0[native]))) if native.any() else np.nan,
                'mean_signal_v': float(np.mean(data[args.signal][native])) if native.any() else np.nan,
                'lick_count': int((licks.trial_id == trial_id).sum())}
         for event, column in [('CUE_ON','cue_relative_s'), ('CUE_OFF','cue_off_relative_s'), ('REWARD_ON','reward_relative_s')]:
@@ -294,11 +308,11 @@ def run(args):
           'incomplete_behavior_trials': sorted(set(trial_starts.trial_id)-set(ids)),
           'lick_events_in_session': len(licks), 'lick_events_in_trials': int((licks.trial_id > 0).sum()),
           'signal_channel': args.signal, 'control_channel': args.control, 'low_pass_hz': args.low_pass,
-          'preprocessing': 'Supplied preprocess_data: lowpass -> double-exponential bleaching correction '
-                           '-> control linear regression -> 100 * corrected_signal / mean(session_signal_expfit).',
-          'normalisation': 'dF/F percent with one constant session denominator; no extra per-trial baseline subtraction',
+          'method': method,
+          'preprocessing': preprocessing_description,
+          'normalisation': 'dF/F percent; denominator is control_fit(t)' if method == 'control_fit' else 'dF/F percent; one constant session denominator',
           'session_f0_v': session_f0,
-          'denominator_scope': 'Mean exponential fit over all recorded samples in the cropped session, including ITIs; fixed before trial exclusions and group selection.',
+          'denominator_scope': 'Session-wide fit, including ITIs; fixed before trial exclusions. '+('Time-varying fitted control reference.' if method == 'control_fit' else 'Constant mean exponential fit.'),
           'fit_scope': 'SESSION_START through last completed TRIAL_END, cropped BEFORE filtering and all fits; trial exclusions affect averages only.',
           'preprocessing_window_ppd_s': [float(selected_time[0]), float(selected_time[-1])],
           'stage_definition': 'Chronological completed trials before exclusions: floor(N/3), floor(2N/3); 100 -> 33/33/34.',
@@ -327,7 +341,7 @@ def run(args):
     selection['exclude_trials'] = trials.loc[~include, 'trial_id'].tolist()
     (out/'trial_selection.json').write_text(json.dumps(selection, indent=2), encoding='utf-8')
     make_plots(out, session, licks, trials, relative_time, matrices['dff_percent'], include, pairs)
-    save_comparisons(out, trials, relative_time, matrices, include, average_trials)
+    save_comparisons(out, trials, relative_time, matrices, include, average_trials, constant_f0=session_f0)
     # The review overview is reduced for rendering only. CSV/NPZ and trial data retain full resolution.
     step = max(1, len(session)//16000)
     display = session.iloc[::step]
@@ -356,6 +370,8 @@ if __name__ == '__main__':
     parser.add_argument('--signal', default='analog_2')
     parser.add_argument('--control', default='analog_1')
     parser.add_argument('--low-pass', type=float, default=20)
+    parser.add_argument('--method', choices=('session_f0', 'control_fit'), default='session_f0',
+                        help='session_f0: exponential correction and constant F0; control_fit: direct filtered-control regression and time-varying reference')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--exclude-trials', default='', help='Example: 3,7,12-15')
     group.add_argument('--selection-json', help='Saved trial_selection.json for these exact input files')

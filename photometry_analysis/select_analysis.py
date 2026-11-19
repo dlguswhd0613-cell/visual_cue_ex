@@ -27,12 +27,21 @@ def choose_and_run():
                                          initialvalue='', parent=root)
         if excluded is None:
             return 0
+        method_number = simpledialog.askinteger(
+            '5. dF/F 계산 방법',
+            '1: exponential 보정 + 세션 공통 F₀\n'
+            '2: 필터링한 control 회귀값으로 나누기\n'
+            '   100 × (signal_filt − 회귀값) / 회귀값',
+            initialvalue=1, minvalue=1, maxvalue=2, parent=root)
+        if method_number is None:
+            return 0
+        method = 'control_fit' if method_number == 2 else 'session_f0'
         from align_photometry import run
         out = Path(destination) / (Path(ppd).stem + '_aligned_' + datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
         print(f'PPD: {ppd}\nEvents: {events}\nResults: {out}\nExcluded: {excluded or "none"}', flush=True)
         run(Namespace(ppd=ppd, events=events, out=str(out), digital=1, signal='analog_2',
                       control='analog_1', low_pass=20, exclude_trials=excluded, sync_pairs=None,
-                      selection_json=None))
+                      selection_json=None, method=method))
         webbrowser.open((out/'review.html').as_uri())
         messagebox.showinfo('분석 완료', f'결과가 저장되었습니다.\n{out}\n\n열린 HTML에서 trial을 추가로 제외하고 평균 CSV를 저장할 수 있습니다.')
         return 0
