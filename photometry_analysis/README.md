@@ -38,7 +38,7 @@ signal·control·dF/F·lick을 확인하고, trial 체크를 해제하면 평균
 않으며, HTML을 다시 열면 최초 분석 때의 선택으로 돌아갑니다.
 
 문 열림 등의 간섭 trial은 사용자가 지정합니다. 제외는 trial 평균에 적용되며,
-전체 PPD로 추정한 bleaching/motion 보정 계수를 다시 추정하지 않습니다.
+실험 구간으로 추정한 bleaching/motion 보정 계수를 다시 추정하지 않습니다.
 
 ## 시간축과 TTL
 
@@ -69,12 +69,12 @@ Arduino reset/rollover 또는 여러 SESSION_START가 섞인 기록은 먼저 �
 
 ## 전처리, 세션 자르기, 평균
 
-첨부된 `data_import.py`의 `preprocess_data`를 그대로 사용합니다. 기본 signal은 `analog_2`,
+`data_import.py`의 원본 전처리 계산식을 사용하며, F₀를 함께 반환하는 선택 옵션을 추가했습니다. 기본 signal은 `analog_2`,
 control은 `analog_1`이며, 20Hz 저역통과 → 이중 지수 bleaching 보정 → control 선형회귀 motion
 보정 → dF/F 계산 순서입니다. **dF/F 단위는 %**이며 이미 100을 곱한 값입니다.
 원본 전처리 함수가 `analog_*_filt`를 사용하지 않으므로 추가 0.01Hz high-pass를 적용하지 않습니다.
 
-전체 PPD를 먼저 전처리한 뒤 SESSION_START부터 마지막 완료 TRIAL_END까지 자릅니다.
+TTL로 SESSION_START와 마지막 완료 TRIAL_END를 찾고 **그 구간으로 먼저 자른 뒤** 필터링, bleaching fitting, motion 회귀 및 dF/F 계산을 수행합니다. fitting용 시간은 잘라낸 첫 샘플에서 0초로 다시 시작합니다. 실험 전후의 기록은 계수 추정에 사용하지 않습니다.
 초기 ITI와 trial 사이 ITI는 세션 파일에 남습니다. PPD에 없는 시작 구간은 0으로 채우지 않으며,
 photometry가 trial 전체를 포함하지 못하면 해당 trial은 평균에서 제외합니다.
 
@@ -93,9 +93,9 @@ SEM은 trial 간 표본 표준편차 / sqrt(N)입니다. N=1이면 SEM을 비우
 | 파일 | 내용 |
 |---|---|
 | `review.html` | 공통 시간축, 개별 trial, 제외 선택, 평균 CSV 다운로드 |
-| `processed_data.csv` | 잘라낸 세션의 signal/control/dF/F/lick, 시간, trial 번호 |
+| `processed_data.csv` | 잘라낸 세션의 signal/control/dF/F/F₀/lick, 시간, trial 번호 |
 | `trials_only.csv` | trial 안 샘플만 선택. 원래 시간축 유지, ITI 미포함 |
-| `processed_data.npz` | 세션 배열 및 원래 PPD 전 길이의 처리값·시각 |
+| `processed_data.npz` | 실험 구간의 배열만 저장. `f0_v`는 원래 샘플링 주파수의 기준 형광. 세션 밖은 처리하지 않음 |
 | `events_aligned.csv`, `events_session.csv` | 전체 이벤트 및 세션 구간 이벤트의 정렬 시각 |
 | `lick_events.csv` | 정확한 lick 정렬 시각, trial 번호, PPD 포함 여부 |
 | `trial_summary.csv` | trial별 시작/끝, 평균 dF/F, lick 수, 평균 포함 여부 |
@@ -128,6 +128,22 @@ py align_photometry.py --ppd "D:\recordings\mouse01.ppd" --events "D:\behavior\e
 py align_photometry.py --ppd "D:\recordings\mouse01.ppd" --events "D:\behavior\events.csv" --out "D:\analysis\mouse01_revised" --selection-json "D:\analysis\mouse01\trial_selection.json"
 ```
 
-검사 명령은 `py -m unittest test_alignment -v`입니다. 합성 데이터로 시계 정렬, lick의 trial
+검사 명령은 `py -m unittest discover -p "test_*.py" -v`입니다. 합성 데이터로 시계 정렬, lick의 trial
 분류와 샘플 배정, 세션 자르기, 제외 평균, 파일별 선택 목록을 확인합니다.
 라이선스와 원본 기여자는 [NOTICE.md](NOTICE.md)를 참고하세요.
+
+## 세션 구간 평균과 early / middle / late 비교
+
+새 코드로 분석을 다시 실행하면 `review.html`에 아래 기능이 표시됩니다. 기존 HTML은 다시 생성해야 합니다.
+
+- **01 구간 보기:** SESSION_START 기준 시작·끝 초를 지정하면 해당 구간의 실제 샘플 평균 dF/F, F₀, Signal을 표시하고 CSV로 저장합니다. ITI가 포함되며 trial 제외 목록은 이 시간 평균에 적용하지 않습니다. 데이터가 없는 구간을 0으로 채우지 않습니다.
+- **05 선택 평균:** trial 번호 범위와 trial 시작 기준 시간 범위(예: 0–6초)를 지정하면 선택한 trial들의 평균 파형과 SEM을 표시합니다. 03의 제외 목록도 반영합니다.
+- **Early / middle / late:** 완료 trial을 시간순으로 나열한 뒤 `floor(N/3)`, `floor(2N/3)` 위치에서 나눕니다. 100회는 1–33 / 34–66 / 67–100이며 나머지는 뒤 그룹에 포함합니다. 제외된 trial 때문에 경계가 바뀌지는 않습니다. 실제 trial 번호가 연속되지 않으면 순서로 나눕니다.
+- **세 곡선 비교:** dF/F (%)가 기본이며 F₀ (V) 또는 Signal (V)도 선택할 수 있습니다. 각 trial의 같은 상대 시각을 동일 가중치로 평균합니다. 세 그룹 모두 포함 trial 전체의 공통 시간 구간을 사용합니다. N=0은 빈 곡선, N=1은 SEM 없음으로 표시합니다.
+- **Trial별 변화:** 지정한 trial 내 시간 구간의 평균을 trial마다 점으로 표시합니다. 그 시간 범위를 끝까지 기록하지 못한 trial은 점에서 제외합니다. 동일한 관찰 구간으로 진행에 따른 반응을 비교할 수 있습니다.
+
+trial 번호 범위는 선택 평균에만 적용되며, 세 그룹 비교는 전체 trial과 제외 목록을 사용합니다. 기본 trial 내 시간 범위는 전체 완전한 trial이 겹치는 구간입니다. 범위를 더 늘리면 세 그룹 평균은 공통 데이터 구간에서만 표시됩니다. F₀는 세션 전체에서 한 번 추정하며 그룹이나 선택 구간마다 재추정하지 않습니다.
+
+`early_middle_late.csv`, `.png`, `.svg`에는 최초 제외 목록으로 계산한 세 그룹 비교가 저장됩니다. PNG/SVG는 dF/F·F₀·Signal을 각각 별도 축에 표시하며, 각 축 안에 세 그룹 곡선이 겹쳐집니다. HTML에서 변경한 선택은 비교 평균·trial별 구간 평균 CSV로 별도 저장하세요.
+
+`trial_comparison.py`는 그룹 지정과 정적 결과 저장을, `trial_comparison.js`는 HTML의 범위 선택·비교·다운로드를 담당합니다. `trial_summary.csv`에는 고정 그룹 `stage`, `mean_f0_v`, `mean_signal_v`도 포함됩니다. 전처리 범위와 그룹 규칙은 `alignment_qc.json`에 기록됩니다.

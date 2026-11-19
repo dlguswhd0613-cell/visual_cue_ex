@@ -93,7 +93,7 @@ class AlignmentTests(unittest.TestCase):
     def test_pipeline_crops_preserves_samples_and_aligns_licks_and_reward(self):
         fs=130
         time=np.arange(40*fs)/fs
-        a,b=1.0007,-2.0
+        a,b=1.0007,2.0
         triggers=np.array([10.9,15.9,25.9,30.9])
         data={'sampling_rate':fs,'time':time*1000,'subject_ID':'synthetic',
               'pulse_times_1':(a*triggers+b)*1000,
@@ -119,19 +119,28 @@ class AlignmentTests(unittest.TestCase):
             args=Namespace(ppd=ppd,events=csv,out=out,digital=1,signal='analog_2',
                            control='analog_1',low_pass=20,exclude_trials='2',
                            selection_json=None,sync_pairs=None)
+            crop=(time>=a+b)&(time<=a*35+b)
+            def preprocess(cropped, **kwargs):
+                # The pre-start and post-end samples must never enter any fit.
+                np.testing.assert_array_equal(cropped['time'],data['time'][crop])
+                np.testing.assert_array_equal(cropped['analog_2'],data['analog_2'][crop])
+                self.assertTrue(kwargs['return_components'])
+                return {'signal_norm':dff[crop], 'signal_expfit':np.full(crop.sum(),2.)}
             with patch('align_photometry.import_ppd',return_value=data), \
-                    patch('align_photometry.preprocess_data',return_value=dff), redirect_stdout(io.StringIO()):
+                    patch('align_photometry.preprocess_data',side_effect=preprocess), redirect_stdout(io.StringIO()):
                 qc=run(args)
             self.assertEqual(qc['matched_ttl_count'],4)
             self.assertEqual(qc['complete_behavior_trials'],2)
             self.assertEqual(qc['included_trials'],1)
             self.assertEqual(qc['lick_events_in_session'],3)
             self.assertEqual(qc['lick_events_in_trials'],2)
-            self.assertAlmostEqual(qc['missing_start_photometry_s'],.9993)
+            self.assertEqual(qc['missing_start_photometry_s'],0)
             with np.load(out/'processed_data.npz') as raw:
                 idx=raw['ppd_sample_index']
                 np.testing.assert_array_equal(raw['dff_percent'],dff[idx])
-                np.testing.assert_array_equal(raw['original_ppd_dff_percent'],dff)
+                self.assertNotIn('original_ppd_dff_percent',raw.files)
+                np.testing.assert_array_equal(raw['f0_v'],np.full(crop.sum(),2.))
+                self.assertGreaterEqual(raw['time_ppd_s'][0],a+b)
                 np.testing.assert_allclose(raw['time_ppd_s'],idx/fs)
                 np.testing.assert_allclose(raw['time_session_s'],raw['time_ppd_s']-(a+b))
                 self.assertLessEqual(raw['time_ppd_s'][-1],a*35+b)
@@ -154,6 +163,8 @@ class AlignmentTests(unittest.TestCase):
             report=(out/'review.html').read_text(encoding='utf-8')
             self.assertNotIn('__ANALYSIS_DATA__',report)
             self.assertIn('window.reviewAPI',report)
+            self.assertNotIn('__COMPARISON_SCRIPT__',report)
+            self.assertTrue((out/'early_middle_late.csv').exists())
 
 
 if __name__=='__main__':

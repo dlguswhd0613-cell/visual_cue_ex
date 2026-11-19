@@ -1,6 +1,6 @@
 """TTL alignment, session crop, trial averages, and an offline review report.
 
-Uses the user's unmodified, GPLv3 pyPhotometry data_import.py for preprocessing.
+Uses the supplied GPLv3 pyPhotometry preprocessing formulas on the cropped session.
 All dF/F values are percent (the supplied preprocess_data already multiplies by 100).
 """
 from __future__ import annotations
@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from data_import import import_ppd, preprocess_data
+from trial_comparison import stage_labels, save_comparisons
 
 TRIGGERS = ('CUE_TRIGGER_ON', 'REWARD_TRIGGER_ON')
 
@@ -202,15 +203,26 @@ def run(args):
     excluded = load_exclusions(args)
     if excluded - set(ids):
         raise ValueError(f'Unknown completed trial IDs in exclusions: {sorted(excluded-set(ids))}')
-    # The source pipeline uses analog_2/analog_1, NOT their *_filt variants.
-    # Keep the full-record preprocessing unchanged, then crop and select trials.
-    processed = preprocess_data(data, signal=args.signal, control=args.control,
-                               low_pass=args.low_pass, normalisation='dF/F', plot=False)
-    if processed.shape != ppd_time.shape or not np.all(np.isfinite(processed)):
-        raise ValueError('Preprocessing did not return one finite value per PPD sample.')
+    # Define the analysis window before any filtering or fitted correction.
     mask = (ppd_time >= origin) & (ppd_time <= ends[-1])
     if not mask.any():
         raise ValueError('PPD and completed behavior session do not overlap.')
+    cropped = dict(data)
+    for key, value in data.items():
+        if isinstance(value, np.ndarray) and value.shape == ppd_time.shape:
+            cropped[key] = value[mask]
+    try:
+        components = preprocess_data(cropped, signal=args.signal, control=args.control,
+                                     low_pass=args.low_pass, normalisation='dF/F', plot=False,
+                                     return_components=True)
+    except (ValueError, RuntimeError) as error:
+        raise ValueError(f'Session-only preprocessing failed (available duration {mask.sum()/fs:.3f}s): {error}') from error
+    processed = np.full(ppd_time.shape, np.nan)
+    f0 = np.full(ppd_time.shape, np.nan)
+    processed[mask] = components['signal_norm']
+    f0[mask] = components['signal_expfit']
+    if not np.all(np.isfinite(processed[mask])) or not np.all(np.isfinite(f0[mask])) or np.any(f0[mask] <= 0):
+        raise ValueError('Session preprocessing must return finite dF/F and positive F0 per sample.')
     selected_time = ppd_time[mask]
     all_trial_ids = assign_trials(ppd_time, starts, ends, ids)
     events['time_ppd_s'] = map_time(events.Arduino_ms)
@@ -226,19 +238,19 @@ def run(args):
     session = pd.DataFrame({'ppd_sample_index': np.flatnonzero(mask), 'time_ppd_s': selected_time,
                             'time_session_s': selected_time-origin,
                             'signal_v': data[args.signal][mask], 'control_v': data[args.control][mask],
-                            'dff_percent': processed[mask], 'lick_count': lick_count[mask],
+                            'dff_percent': processed[mask], 'f0_v': f0[mask], 'lick_count': lick_count[mask],
                             'digital_1': data['digital_1'][mask], 'digital_2': data['digital_2'][mask],
                             'trial_id': all_trial_ids[mask]})
     relative_time = np.arange(int(np.floor((ends-starts).max()*fs)) + 1) / fs
-    matrices = {key: np.full((len(ids), len(relative_time)), np.nan) for key in ('signal_v','control_v','dff_percent')}
-    signals = {'signal_v': data[args.signal], 'control_v': data[args.control], 'dff_percent': processed}
+    matrices = {key: np.full((len(ids), len(relative_time)), np.nan) for key in ('signal_v','control_v','dff_percent','f0_v')}
+    signals = {'signal_v': data[args.signal], 'control_v': data[args.control], 'dff_percent': processed, 'f0_v': f0}
     summary_rows, lick_relative = [], []
     for i, (trial_id, start, end) in enumerate(zip(ids, starts, ends)):
         query = start + relative_time
-        valid = (query <= end + 1e-9) & (query >= ppd_time[0]) & (query <= ppd_time[-1])
+        valid = (query <= end + 1e-9) & (query >= selected_time[0]) & (query <= selected_time[-1])
         for key, signal in signals.items():
-            matrices[key][i, valid] = np.interp(query[valid], ppd_time, signal)
-        native = all_trial_ids == trial_id
+            matrices[key][i, valid] = np.interp(query[valid], selected_time, signal[mask])
+        native = (all_trial_ids == trial_id) & mask
         full = start >= ppd_time[0] and end <= ppd_time[-1]
         row = {'trial_id': int(trial_id), 'start_ppd_s': start, 'end_ppd_s': end,
                'start_session_s': start-origin, 'end_session_s': end-origin, 'duration_s': end-start,
@@ -246,6 +258,8 @@ def run(args):
                'exclusion_reason': 'user' if trial_id in excluded else ('' if full else 'incomplete_photometry'),
                'native_sample_count': int(native.sum()),
                'mean_dff_percent': float(np.mean(processed[native])) if native.any() else np.nan,
+               'mean_f0_v': float(np.mean(f0[native])) if native.any() else np.nan,
+               'mean_signal_v': float(np.mean(data[args.signal][native])) if native.any() else np.nan,
                'lick_count': int((licks.trial_id == trial_id).sum())}
         for event, column in [('CUE_ON','cue_relative_s'), ('CUE_OFF','cue_off_relative_s'), ('REWARD_ON','reward_relative_s')]:
             ev = events[(events.Event == event) & (events.Value == str(trial_id))]
@@ -253,6 +267,7 @@ def run(args):
         summary_rows.append(row)
         lick_relative.append((licks.loc[licks.trial_id == trial_id, 'time_ppd_s']-start).tolist())
     trials = pd.DataFrame(summary_rows)
+    trials['stage'] = stage_labels(len(trials))
     include = trials.included.to_numpy(bool)
     mean, sem, count = average_trials(matrices['dff_percent'], include)
     average = pd.DataFrame({'time_from_trial_start_s': relative_time, 'mean_dff_percent': mean,
@@ -277,7 +292,9 @@ def run(args):
           'preprocessing': 'Supplied preprocess_data: lowpass -> double-exponential bleaching correction '
                            '-> control linear regression -> 100 * corrected_signal / signal_expfit.',
           'normalisation': 'dF/F percent; no extra per-trial baseline subtraction',
-          'fit_scope': 'Full PPD before cropping; trial exclusions affect averages only, not preprocessing fits.',
+          'fit_scope': 'SESSION_START through last completed TRIAL_END, cropped BEFORE filtering and all fits; trial exclusions affect averages only.',
+          'preprocessing_window_ppd_s': [float(selected_time[0]), float(selected_time[-1])],
+          'stage_definition': 'Chronological completed trials before exclusions: floor(N/3), floor(2N/3); 100 -> 33/33/34.',
           'host_events': 'Rows without Arduino_ms are left unmapped; CUE_ON is an Arduino screen-ACK marker, not photons.',
           'trial_alignment': 'TRIAL_START; fixed seconds on PPD clock; no duration stretching; NaN after each TRIAL_END. '
                              'Primary average uses common support of all included trials; available-support CSV is separate.',
@@ -296,22 +313,27 @@ def run(args):
     pd.DataFrame(matrices['dff_percent'].T, index=relative_time,
                  columns=[f'trial_{i}' for i in ids]).rename_axis('time_from_trial_start_s').to_csv(
                      out/'trial_dff_matrix.csv', float_format='%.9g')
-    np.savez_compressed(out/'processed_data.npz', **{k:session[k].to_numpy() for k in session},
-                        original_ppd_dff_percent=processed, original_ppd_time_s=ppd_time)
+    np.savez_compressed(out/'processed_data.npz', **{k:session[k].to_numpy() for k in session})
     np.savez_compressed(out/'trial_data.npz', trial_ids=ids, time_from_trial_start_s=relative_time, **matrices)
     (out/'alignment_qc.json').write_text(json.dumps(qc, indent=2, ensure_ascii=False, allow_nan=False), encoding='utf-8')
     selection = {key: qc[key] for key in ('ppd_file','ppd_sha256','events_sha256')}
     selection['exclude_trials'] = trials.loc[~include, 'trial_id'].tolist()
     (out/'trial_selection.json').write_text(json.dumps(selection, indent=2), encoding='utf-8')
     make_plots(out, session, licks, trials, relative_time, matrices['dff_percent'], include, pairs)
+    save_comparisons(out, trials, relative_time, matrices, include, average_trials)
     # The review overview is reduced for rendering only. CSV/NPZ and trial data retain full resolution.
     step = max(1, len(session)//16000)
     display = session.iloc[::step]
-    payload = {'qc': qc, 'overview': {k: display[k].to_numpy() for k in ('time_session_s','signal_v','control_v','dff_percent')},
+    payload = {'qc': qc, 'overview': {k: display[k].to_numpy() for k in ('time_session_s','signal_v','control_v','dff_percent','f0_v')},
                'overview_step': step, 'licks': licks.time_session_s.to_numpy(), 'trials': trials.to_dict('records'),
-               'relative_time': relative_time, 'matrices': matrices, 'trial_licks': lick_relative}
+               'relative_time': relative_time, 'matrices': matrices, 'trial_licks': lick_relative,
+               'session_means': {'start_s': float(session.time_session_s.iloc[0]), 'fs': fs,
+                   'prefix': {key: np.r_[0., np.cumsum(session[key].to_numpy())].tolist() for key in ('signal_v','dff_percent','f0_v')}}}
     template = Path(__file__).with_name('review_template.html').read_text(encoding='utf-8')
-    blob = json.dumps(json_safe(payload), ensure_ascii=False, separators=(',',':'), allow_nan=False).replace('</', '<\\/')
+    template = template.replace('__COMPARISON_SCRIPT__', Path(__file__).with_name('trial_comparison.js').read_text(encoding='utf-8'))
+    safe_payload = json_safe(payload)
+    safe_payload['session_means'] = payload['session_means']  # Preserve precision for differences of cumulative sums.
+    blob = json.dumps(safe_payload, ensure_ascii=False, separators=(',',':'), allow_nan=False).replace('</', '<\\/')
     (out/'review.html').write_text(template.replace('__ANALYSIS_DATA__', blob), encoding='utf-8')
     print(json.dumps(qc, indent=2, ensure_ascii=False))
     return qc

@@ -152,6 +152,7 @@ def preprocess_data(
     normalisation="dF/F",
     plot=False,
     fig_path=None,
+    return_components=False,
 ):
     """Preprocess photometry data by applyling the following steps in order:
 
@@ -178,6 +179,8 @@ def preprocess_data(
         fig_path : Specify a file path (including file extension) to save the plotted figure.
     Returns:
         signal_norm : Numpy array containing the signal after preprocessing and normalisation.
+        With return_components=True, returns a dict containing signal_norm,
+        signal_expfit (F0), control_expfit, and signal_mc at the input sample rate.
     """
     assert normalisation in ("dF/F", "z-score", None), "normalisation must be 'dF/F', 'z-score' or None"
     if data_dict:  # Extract variables from data dict.
@@ -249,6 +252,9 @@ def preprocess_data(
         if fig_path:
             fig.savefig(fig_path)
             plt.close(fig)
+    if return_components:
+        return dict(signal_norm=signal_norm, signal_expfit=signal_expfit,
+                    control_expfit=control_expfit, signal_mc=signal_mc)
     return signal_norm
 
 
