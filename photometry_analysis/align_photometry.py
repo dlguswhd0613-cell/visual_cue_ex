@@ -415,6 +415,9 @@ def run(args):
           'fit_scope': 'SESSION_START through last completed TRIAL_END, cropped BEFORE filtering and all fits; trial exclusions affect averages only.',
           'preprocessing_window_ppd_s': [float(selected_time[0]), float(selected_time[-1])],
           'stage_definition': 'Chronological completed trials before exclusions: floor(N/3), floor(2N/3); 100 -> 33/33/34.',
+          'stage_comparison': ('Fixed 0–10 s time axis from TRIAL_START; equal-weight '
+                               'available samples per stage, without time warping.' if task == 'operant' else
+                               'Fixed 0–10 s time axis from TRIAL_START; common time support across all included trials.'),
           'host_events': 'Rows without Arduino_ms are left unmapped; CUE_ON is an Arduino screen-ACK marker, not photons.',
           'trial_alignment': 'Trial matrices use TRIAL_START and seconds on the PPD clock, with NaN after TRIAL_END. '
                              'Operant real-time averages use available samples through the mean trial-ending lick. '
@@ -448,7 +451,8 @@ def run(args):
     selection['exclude_trials'] = trials.loc[~include, 'trial_id'].tolist()
     (out/'trial_selection.json').write_text(json.dumps(selection, indent=2), encoding='utf-8')
     make_plots(out, session, licks, trials, relative_time, matrices['dff_percent'], include, pairs)
-    save_comparisons(out, trials, relative_time, matrices, include, average_trials, constant_f0=session_f0)
+    save_comparisons(out, trials, relative_time, matrices, include, average_trials,
+                     constant_f0=session_f0, task=task)
     # The review overview is reduced for rendering only. CSV/NPZ and trial data retain full resolution.
     step = max(1, len(session)//16000)
     display = session.iloc[::step]

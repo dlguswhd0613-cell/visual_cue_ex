@@ -29,9 +29,10 @@ def stage_labels(n):
     return labels
 
 
-def comparison_curves(matrix, include, labels, average):
-    # One common support across all included trials, shared by all three groups.
-    support = np.all(np.isfinite(matrix[include]), axis=0) if include.any() else np.zeros(matrix.shape[1], bool)
+def comparison_curves(matrix, include, labels, average, common_support=True):
+    # Operant trials have variable endings: retain each group's available samples.
+    reduce = np.all if common_support else np.any
+    support = reduce(np.isfinite(matrix[include]), axis=0) if include.any() else np.zeros(matrix.shape[1], bool)
     result = {}
     for name in STAGES:
         selected = include & (labels == name)
@@ -41,15 +42,20 @@ def comparison_curves(matrix, include, labels, average):
     return result, support
 
 
-def save_comparisons(out, trials, time, matrices, include, average, constant_f0=None):
+def save_comparisons(out, trials, time, matrices, include, average, constant_f0=None, task='unknown'):
     import matplotlib.pyplot as plt
     labels = trials.stage.to_numpy()
     colors = ('#18755f', '#b47720', '#8756aa')
     rows = []
+    operant = task == 'operant'
+    rewards = trials.loc[include, 'reward_relative_s']
+    rewards = rewards[np.isfinite(rewards)]
     fig, axes = plt.subplots(3, 1, figsize=(11, 10), constrained_layout=True)
     for ax, (metric, title) in zip(axes, METRICS.items()):
         shade_average_cue(ax, trials.loc[include])
-        curves, support = comparison_curves(matrices[metric], include, labels, average)
+        curves, support = comparison_curves(matrices[metric], include, labels, average,
+                                             common_support=not operant)
+        support &= (time >= 0) & (time <= 10)
         for name, color in zip(STAGES, colors):
             mean, sem, count, n = curves[name]
             if metric == 'f0_v' and n and constant_f0 is not None:
@@ -61,8 +67,12 @@ def save_comparisons(out, trials, time, matrices, include, average, constant_f0=
                 rows.append(dict(metric=metric, stage=name, time_from_trial_start_s=time[j],
                                  mean=mean[j], sem=sem[j], n_trials=int(count[j])))
         ax.set(ylabel=title, xlabel='Time from TRIAL_START (s)')
+        ax.set_xlim(0, 10)
+        if not rewards.empty:
+            ax.axvline(rewards.median(), color='#ab6f27', ls='--', label='Reward (median)')
         ax.legend()
-    fig.suptitle('Early / middle / late: common support, mean ± SEM')
+    support_label = 'available samples' if operant else 'common support'
+    fig.suptitle(f'Early / middle / late: 0–10 s, {support_label}, mean ± SEM')
     fig.savefig(out/'early_middle_late.png', dpi=170)
     fig.savefig(out/'early_middle_late.svg')
     plt.close(fig)
