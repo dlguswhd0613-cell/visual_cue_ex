@@ -82,9 +82,9 @@ photometry가 trial 전체를 포함하지 못하면 해당 trial은 평균에�
 
 각 TRIAL_START를 0으로 맞추고 PPD의 샘플링 주파수로 선형 보간한 뒤, 같은 상대 시각의
 dF/F를 trial 간 동일 가중치로 평균합니다. trial 길이를 늘이거나 압축하지 않습니다.
-기본 평균은 **선택한 모든 trial이 겹치는 구간**을 사용합니다. Operant처럼 trial 길이가
-다르면 긴 trial의 뒷부분은 기본 평균에서 빠집니다. 별도 available-support CSV에는 각
-시각에 남아 있는 trial로 계산한 평균과 N을 제공합니다.
+Pavlovian과 task를 식별할 수 없는 기록의 기본 평균은 **선택한 모든 trial이 겹치는 구간**을
+사용합니다. Operant는 아래의 실제 시간 평균과 종료 lick 정렬 평균을 제공합니다.
+별도 available-support CSV에는 전체 시간 범위에서 각 시각에 남아 있는 trial의 평균과 N을 저장합니다.
 
 SEM은 trial 간 표본 표준편차 / sqrt(N)입니다. N=1이면 SEM을 비우며 N=0이면 평균도
 비웁니다. `trial_summary.csv`의 `mean_dff_percent`는 각 trial 안에 실제 기록된 샘플의
@@ -102,7 +102,9 @@ SEM은 trial 간 표본 표준편차 / sqrt(N)입니다. N=1이면 SEM을 비우
 | `lick_events.csv` | 정확한 lick 정렬 시각, trial 번호, PPD 포함 여부 |
 | `trial_summary.csv` | trial별 시작/끝, 평균 dF/F, lick 수, 평균 포함 여부 |
 | `trial_dff_matrix.csv`, `trial_data.npz` | trial 상대 시간의 dF/F 행렬 및 signal/control 배열 |
-| `dff_average.csv` | 포함 trial의 공통 구간 평균, SEM, N |
+| `dff_average.csv` | 실제 시간 기준 화면의 평균, SEM, N. Operant는 평균 종료 lick 시각까지 |
+| `dff_average_common_support.csv` | 포함 trial의 공통 구간 평균, SEM, N |
+| `dff_average_lick_aligned.csv`, `.png`, `.svg` | Operant의 종료 lick을 맞춘 평균과 그래프 |
 | `dff_average_available_support.csv` | 각 시각에 데이터가 남은 trial의 평균, SEM, N |
 | `ttl_matches.csv`, `alignment_qc.json` | TTL 대응과 잔차, 정렬 계수, 입력 해시, 처리 조건 |
 | `trial_selection.json` | 이 입력 파일 쌍에 대한 제외 목록과 해시 |
@@ -135,6 +137,26 @@ py align_photometry.py --ppd "D:\recordings\mouse01.ppd" --events "D:\behavior\e
 라이선스와 원본 기여자는 [NOTICE.md](NOTICE.md)를 참고하세요.
 
 ## 세션 구간 평균과 early / middle / late 비교
+
+### Operant 개별 trial과 전체 평균
+
+로그의 `TASK_OK`로 task를 확인합니다. 이전 Operant 기록은 `LICK_END_CAPS` 응답 또는
+`WAIT_LICK` 이벤트로 식별합니다. 명시적인 `TASK_OK=1`은 Pavlovian으로 처리합니다.
+`trial_summary.csv`의 `end_lick_relative_s`는 Operant trial에서 보상 후 처음 기록된 lick의
+trial 상대 시각입니다. 밸브가 닫히기 전에 lick한 경우도 포함합니다.
+
+개별 Operant 그래프는 종료 lick 시각을 x축 길이의 80% 위치에 표시합니다. 종료 lick이
+없는 trial은 trial 종료 시각을 사용합니다. 화면 04에서 두 평균을 선택할 수 있습니다.
+
+- **실제 시간**은 실제 초 단위를 사용합니다. 선택한 trial들의 종료 lick 시각 산술평균까지
+  각 시점에 데이터가 남아 있는 trial로 평균·SEM을 계산합니다. 기여 trial 수를 함께 표시합니다.
+- **종료 lick 정렬**은 `조정 시각 = 원래 trial 상대 시각 × 평균 종료 lick / 해당 trial 종료 lick`을
+  사용합니다. 조정 시간 격자로 선형 보간해 평균하며 cue·reward·lick도 같은 비율로 옮깁니다.
+  종료 lick이 있는 선택 trial을 사용하고, 이 조정 시간은 실제 경과 시간과 구분해 표기합니다.
+
+두 화면 모두 평균 종료 lick을 보라색 선으로 표시하고 x축 길이의 80%에 배치합니다.
+Trial 제외를 바꾸면 평균 lick, 음영, 평균과 raster가 함께 갱신됩니다. 평균 CSV 저장 버튼은
+현재 선택한 시간 기준을 내보냅니다. 저장되는 두 PNG/SVG는 최초 제외 목록을 사용합니다.
 
 새 코드로 분석을 다시 실행하면 `review.html`에 아래 기능이 표시됩니다. 기존 HTML은 다시 생성해야 합니다.
 

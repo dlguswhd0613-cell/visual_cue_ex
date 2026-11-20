@@ -105,6 +105,33 @@ def average_trials(matrix, include):
     return mean, sem, n
 
 
+def session_task(board):
+    start = board.loc[board.Event == 'SESSION_START', 'Arduino_ms'].iloc[0]
+    setup = board[board.Arduino_ms <= start]
+    mode = setup.loc[setup.Event == 'TASK_OK', 'Value']
+    if len(mode):
+        return {'1': 'pavlovian', '2': 'operant'}.get(str(mode.iloc[-1]), 'unknown')
+    lick_caps = setup[(setup.Event == 'LICK_END_CAPS') & (setup.Value.astype(str) == '1')]
+    if len(lick_caps) or (board.Event == 'WAIT_LICK').any():
+        return 'operant'
+    return 'unknown'
+
+
+def display_average(matrix, include, trials, time):
+    """Operant averages extend to the mean ending lick on the original seconds axis."""
+    mean, sem, count = average_trials(matrix, include)
+    end_licks = trials.loc[include, 'end_lick_relative_s'].dropna()
+    mean_lick = float(end_licks.mean()) if len(end_licks) else None
+    support = (count == include.sum()) & (count > 0)
+    if mean_lick is not None:
+        support = (time <= mean_lick + 1e-9) & (count > 0)
+    mean[~support], sem[~support] = np.nan, np.nan
+    visible = time[support]
+    end = float(visible[-1]) if len(visible) else float(time[-1])
+    axis_end = mean_lick / .8 if mean_lick is not None else end
+    return mean, sem, count, support, mean_lick, max(axis_end, 1e-6)
+
+
 def json_safe(value):
     if isinstance(value, dict):
         return {k: json_safe(v) for k, v in value.items()}
@@ -142,10 +169,50 @@ def make_plots(out, session, licks, trials, relative_time, matrix, include, pair
     fig.savefig(out / 'aligned_session.png', dpi=170)
     plt.close(fig)
 
-    mean, sem, n = average_trials(matrix, include)
-    common = (n == include.sum()) & (n > 0)
-    mean[~common] = np.nan
-    sem[~common] = np.nan
+    make_average_plot(out, licks, trials, relative_time, matrix, include)
+    if trials.loc[include, 'end_lick_relative_s'].notna().any():
+        make_average_plot(out, licks, trials, relative_time, matrix, include, warped=True)
+
+    fig, ax = plt.subplots(figsize=(11, 3.5), constrained_layout=True)
+    ax.scatter(pairs.ppd_time_s, pairs.residual_ms, s=10, color='#137d68')
+    ax.axhline(0, color='gray', lw=.7)
+    ax.set(xlabel='PPD time (s)', ylabel='TTL residual (ms)', title='Alignment quality: matched digital rising edges')
+    fig.savefig(out / 'ttl_alignment_qc.png', dpi=170)
+    plt.close(fig)
+
+
+def lick_aligned_trials(matrix, include, trials, time):
+    selected = include & np.isfinite(trials.end_lick_relative_s) & (trials.end_lick_relative_s > 0)
+    mean_lick = float(trials.loc[selected, 'end_lick_relative_s'].mean())
+    if not np.isfinite(mean_lick):
+        raise ValueError('Lick alignment requires at least one selected trial-ending lick.')
+    fs = 1 / (time[1] - time[0])
+    phase = np.linspace(0, 1, int(np.ceil(mean_lick * fs)) + 1)
+    aligned = np.full((len(trials), len(phase)), np.nan)
+    rows = trials.copy()
+    rows['time_scale'] = mean_lick / rows.end_lick_relative_s
+    for i in np.flatnonzero(selected):
+        valid = np.isfinite(matrix[i])
+        if not valid.any():
+            continue
+        aligned[i] = np.interp(phase * trials.end_lick_relative_s.iloc[i],
+                               time[valid], matrix[i, valid], left=np.nan, right=np.nan)
+    for key in ('cue_relative_s', 'cue_off_relative_s', 'reward_relative_s', 'wait_lick_relative_s', 'duration_s'):
+        rows[key] = rows[key] * rows.time_scale
+    rows.loc[selected, 'end_lick_relative_s'] = mean_lick
+    return aligned, phase * mean_lick, rows, np.asarray(selected, dtype=bool)
+
+
+def make_average_plot(out, licks, trials, relative_time, matrix, include, warped=False):
+    trials = trials.copy()
+    trials['time_scale'] = 1.
+    stem = 'dff_average'
+    xlabel = 'Time from TRIAL_START (s; photometry clock)'
+    if warped:
+        matrix, relative_time, trials, include = lick_aligned_trials(matrix, include, trials, relative_time)
+        stem = 'dff_average_lick_aligned'
+        xlabel = 'Lick-aligned time (s; trial time scaled to mean ending lick)'
+    mean, sem, n, common, mean_lick, axis_end = display_average(matrix, include, trials, relative_time)
     fig, axes = plt.subplots(3, 1, figsize=(11, 9), sharex=True, constrained_layout=True,
                              gridspec_kw={'height_ratios': [2, 1, 1.5]})
     for ax in axes[:2]:
@@ -157,6 +224,9 @@ def make_plots(out, session, licks, trials, relative_time, matrix, include, pair
         if trials.loc[include, key].notna().any():
             axes[0].axvline(trials.loc[include, key].median(), color=color, ls='--', label=label)
     axes[0].set_ylabel('dF/F (%)')
+    if mean_lick is not None:
+        for ax in axes:
+            ax.axvline(mean_lick, color='#8756aa', label='Mean trial-ending lick', lw=1.2)
     axes[0].legend(fontsize=8)
     axes[1].plot(relative_time[common], n[common], color='#24529c')
     axes[1].set_ylabel('Contributing trials')
@@ -165,22 +235,20 @@ def make_plots(out, session, licks, trials, relative_time, matrix, include, pair
                               row.cue_relative_s, row.cue_off_relative_s,
                               color=CUE_COLOR, alpha=CUE_ALPHA, linewidth=0, zorder=0)
     for row in trials.loc[include].itertuples():
-        lt = licks.loc[licks.trial_id == row.trial_id, 'time_session_s'].to_numpy() - row.start_session_s
+        lt = (licks.loc[licks.trial_id == row.trial_id, 'time_session_s'].to_numpy() - row.start_session_s) * row.time_scale
         axes[2].scatter(lt, np.full(len(lt), row.trial_id), marker='|', s=14, color='#302a47')
-    axes[2].set(xlabel='Time from TRIAL_START (s; photometry clock)', ylabel='Lick / trial ID',
-                xlim=(0, relative_time[np.flatnonzero(common)[-1]] if common.any() else relative_time[-1]))
+    axes[2].set(xlabel=xlabel, ylabel='Lick / trial ID',
+                xlim=(0, axis_end))
     axes[2].set_title('Shaded cue ON–OFF for each included trial', fontsize=10)
-    fig.suptitle('Trial-aligned dF/F average and lick raster; no time warping')
-    fig.savefig(out / 'dff_average.png', dpi=180)
-    fig.savefig(out / 'dff_average.svg')
+    fig.suptitle('Trial-ending lick aligned average' if warped else 'Trial-aligned dF/F average and lick raster; no time warping')
+    fig.savefig(out / (stem + '.png'), dpi=180)
+    fig.savefig(out / (stem + '.svg'))
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(11, 3.5), constrained_layout=True)
-    ax.scatter(pairs.ppd_time_s, pairs.residual_ms, s=10, color='#137d68')
-    ax.axhline(0, color='gray', lw=.7)
-    ax.set(xlabel='PPD time (s)', ylabel='TTL residual (ms)', title='Alignment quality: matched digital rising edges')
-    fig.savefig(out / 'ttl_alignment_qc.png', dpi=170)
-    plt.close(fig)
+    if warped:
+        pd.DataFrame({'lick_aligned_time_s': relative_time,
+                      'mean_dff_percent': mean, 'sem_dff_percent': sem, 'n_trials': n}).to_csv(
+                          out / (stem + '.csv'), index=False, float_format='%.9g')
 
 
 def run(args):
@@ -197,6 +265,7 @@ def run(args):
     session_starts = board[board.Event == 'SESSION_START']
     if len(session_starts) != 1:
         raise ValueError('Exactly one SESSION_START is required.')
+    task = session_task(board)
     data = import_ppd(args.ppd, low_pass=None, high_pass=None)
     fs = float(data['sampling_rate'])
     ppd_time = data['time'] / 1000
@@ -297,11 +366,17 @@ def run(args):
                'mean_f0_v': (session_f0 if session_f0 is not None else float(np.mean(f0[native]))) if native.any() else np.nan,
                'mean_signal_v': float(np.mean(data[args.signal][native])) if native.any() else np.nan,
                'lick_count': int((licks.trial_id == trial_id).sum())}
-        for event, column in [('CUE_ON','cue_relative_s'), ('CUE_OFF','cue_off_relative_s'), ('REWARD_ON','reward_relative_s')]:
+        for event, column in [('CUE_ON','cue_relative_s'), ('CUE_OFF','cue_off_relative_s'),
+                              ('REWARD_ON','reward_relative_s'), ('WAIT_LICK','wait_lick_relative_s')]:
             ev = events[(events.Event == event) & (events.Value == str(trial_id))]
             row[column] = float(ev.time_ppd_s.iloc[0]-start) if len(ev) else np.nan
+        trial_licks = licks.loc[licks.trial_id == trial_id, 'time_ppd_s'] - start
+        after_reward = trial_licks[trial_licks >= row['reward_relative_s']]
+        row['end_lick_relative_s'] = (
+            float(after_reward.iloc[0]) if task == 'operant' and len(after_reward) else np.nan
+        )
         summary_rows.append(row)
-        lick_relative.append((licks.loc[licks.trial_id == trial_id, 'time_ppd_s']-start).tolist())
+        lick_relative.append(trial_licks.tolist())
     trials = pd.DataFrame(summary_rows)
     trials['stage'] = stage_labels(len(trials))
     include = trials.included.to_numpy(bool)
@@ -309,6 +384,11 @@ def run(args):
     average = pd.DataFrame({'time_from_trial_start_s': relative_time, 'mean_dff_percent': mean,
                             'sem_dff_percent': sem, 'n_trials': count})
     common = (count == include.sum()) & (count > 0)
+    shown_mean, shown_sem, shown_count, shown_support, mean_lick, _ = display_average(
+        matrices['dff_percent'], include, trials, relative_time)
+    plotted_average = pd.DataFrame({'time_from_trial_start_s': relative_time,
+                                    'mean_dff_percent': shown_mean, 'sem_dff_percent': shown_sem,
+                                    'n_trials': shown_count})
     qc = {'ppd_file': Path(args.ppd).name, 'ppd_subject_ID': str(data['subject_ID']),
           'ppd_sha256': hashlib.sha256(Path(args.ppd).read_bytes()).hexdigest(),
           'events_sha256': hashlib.sha256(Path(args.events).read_bytes()).hexdigest(),
@@ -326,6 +406,8 @@ def run(args):
           'lick_events_in_session': len(licks), 'lick_events_in_trials': int((licks.trial_id > 0).sum()),
           'signal_channel': args.signal, 'control_channel': args.control, 'low_pass_hz': args.low_pass,
           'method': method,
+          'task': task,
+          'mean_end_lick_relative_s': mean_lick,
           'preprocessing': preprocessing_description,
           'normalisation': 'dF/F percent; denominator is fitted control(t)' if method != 'session_f0' else 'dF/F percent; one constant session denominator',
           'session_f0_v': session_f0,
@@ -334,8 +416,10 @@ def run(args):
           'preprocessing_window_ppd_s': [float(selected_time[0]), float(selected_time[-1])],
           'stage_definition': 'Chronological completed trials before exclusions: floor(N/3), floor(2N/3); 100 -> 33/33/34.',
           'host_events': 'Rows without Arduino_ms are left unmapped; CUE_ON is an Arduino screen-ACK marker, not photons.',
-          'trial_alignment': 'TRIAL_START; fixed seconds on PPD clock; no duration stretching; NaN after each TRIAL_END. '
-                             'Primary average uses common support of all included trials; available-support CSV is separate.',
+          'trial_alignment': 'Trial matrices use TRIAL_START and seconds on the PPD clock, with NaN after TRIAL_END. '
+                             'Operant real-time averages use available samples through the mean trial-ending lick. '
+                             'The separate lick-aligned average scales each trial time by mean ending lick / trial ending lick. '
+                             'Pavlovian averages use common support.',
           'mean_of_trial_means_percent': float(trials.loc[include, 'mean_dff_percent'].mean()) if include.any() else None,
           'clipping_samples': {k: int(v.sum()) for k,v in data.items() if k.endswith('_clipping')}}
     if method == 'irls':
@@ -350,7 +434,9 @@ def run(args):
     licks.to_csv(out/'lick_events.csv', index=False, float_format='%.9g')
     pairs.to_csv(out/'ttl_matches.csv', index=False, float_format='%.12g')
     trials.to_csv(out/'trial_summary.csv', index=False, float_format='%.9g')
-    average[common].to_csv(out/'dff_average.csv', index=False, float_format='%.9g')
+    plotted_average[shown_support].to_csv(out/'dff_average.csv', index=False, float_format='%.9g')
+    if task == 'operant':
+        average[common].to_csv(out/'dff_average_common_support.csv', index=False, float_format='%.9g')
     average.to_csv(out/'dff_average_available_support.csv', index=False, float_format='%.9g')
     pd.DataFrame(matrices['dff_percent'].T, index=relative_time,
                  columns=[f'trial_{i}' for i in ids]).rename_axis('time_from_trial_start_s').to_csv(
@@ -372,6 +458,7 @@ def run(args):
                'session_means': {'start_s': float(session.time_session_s.iloc[0]), 'fs': fs,
                    'prefix': {key: np.r_[0., np.cumsum(session[key].to_numpy())].tolist() for key in ('signal_v','dff_percent','f0_v')}}}
     template = Path(__file__).with_name('review_template.html').read_text(encoding='utf-8')
+    template = template.replace('__AVERAGE_SCRIPT__', Path(__file__).with_name('trial_average.js').read_text(encoding='utf-8'))
     template = template.replace('__COMPARISON_SCRIPT__', Path(__file__).with_name('trial_comparison.js').read_text(encoding='utf-8'))
     safe_payload = json_safe(payload)
     safe_payload['qc']['session_f0_v'] = session_f0
