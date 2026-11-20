@@ -128,7 +128,7 @@ def display_average(matrix, include, trials, time):
     mean[~support], sem[~support] = np.nan, np.nan
     visible = time[support]
     end = float(visible[-1]) if len(visible) else float(time[-1])
-    axis_end = mean_lick / .8 if mean_lick is not None else end
+    axis_end = mean_lick if mean_lick is not None else end
     return mean, sem, count, support, mean_lick, max(axis_end, 1e-6)
 
 

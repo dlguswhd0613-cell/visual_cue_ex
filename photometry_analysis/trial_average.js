@@ -5,7 +5,7 @@ const lickColor = '#8756aa';
 function renderTrial(){
   const r=D.trials[current];
   const endLick=operant&&finite(r.end_lick_relative_s)?r.end_lick_relative_s:null;
-  const axisEnd=operant?Math.max((endLick??r.duration_s)/.8,r.duration_s,1/Q.sampling_rate_hz):Math.max(r.duration_s,D.relative_time.at(-1));
+  const axisEnd=operant?Math.max(endLick??r.duration_s,1e-6):Math.max(r.duration_s,D.relative_time.at(-1));
   stack('trialPlot',D.relative_time,
     [D.matrices.signal_v[current],D.matrices.control_v[current],D.matrices.dff_percent[current]],
     D.trial_licks[current],[0,axisEnd],
@@ -49,7 +49,7 @@ function computeDisplayAverage(){
   }
   let last=0;
   for(let j=0;j<time.length;j++)if(finite(result.mean[j]))last=j;
-  const axisEnd=finite(meanLick)?meanLick/.8:(time[last]||D.relative_time.at(-1));
+  const axisEnd=finite(meanLick)?meanLick:(time[last]||D.relative_time.at(-1));
   const rows=D.trials.map((row,i)=>({...row,
     cue_relative_s:finite(row.cue_relative_s)?row.cue_relative_s*scales[i]:null,
     cue_off_relative_s:finite(row.cue_off_relative_s)?row.cue_off_relative_s*scales[i]:null,
@@ -124,7 +124,7 @@ function refresh(){
   $('meanInfo').textContent=`Trial별 평균의 평균 ${fmt(m)}% · 시각별 기여 수 ${nonzero.length?Math.min(...nonzero):0}–${nonzero.length?Math.max(...nonzero):0}${ending}`;
   if(operant)$('averageDescription').textContent=avg.warped?
     'Trial 시작을 0으로 두고 각 trial의 시간을 평균 종료 lick / 해당 trial 종료 lick 비율로 조정합니다. cue·reward·lick에도 같은 비율을 적용합니다. 실선은 같은 조정 시각의 평균, 음영은 ±SEM입니다. 종료 lick이 기록된 trial을 사용하며 보라색 선은 평균 종료 lick 시각입니다.':
-    '실제 초 단위로 평균 종료 lick 시각까지 계산합니다. 각 시점에 기록이 남아 있는 trial의 평균과 ±SEM을 표시하므로 기여 trial 수가 달라집니다. 보라색 선은 평균 종료 lick 시각이며 가로축의 80% 위치입니다.';
+    '실제 초 단위로 평균 종료 lick 시각까지 계산합니다. 각 시점에 기록이 남아 있는 trial의 평균과 ±SEM을 표시하므로 기여 trial 수가 달라집니다. 보라색 선은 평균 종료 lick 시각이며 가로축의 오른쪽 끝입니다.';
   if(operant)$('rasterCueDescription').textContent=avg.warped?'각 행의 색 구간은 해당 trial의 시간 비율로 조정한 cue 시작–끝입니다.':'각 행의 색 구간은 해당 trial의 실제 cue 시작–끝입니다.';
   document.querySelectorAll('#trialGrid input').forEach((x,i)=>{x.checked=include[i];x.parentElement.classList.toggle('off',!include[i]);});
   $('excludeInput').value=D.trials.filter((r,i)=>!include[i]).map(r=>r.trial_id).join(',');

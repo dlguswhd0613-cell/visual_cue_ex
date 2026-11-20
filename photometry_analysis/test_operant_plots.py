@@ -25,7 +25,7 @@ class OperantPlotTests(unittest.TestCase):
         rows = pd.DataFrame({'end_lick_relative_s': [4., 8., 100.]})
         mean, sem, count, support, lick, limit = display_average(matrix, np.array([True, True, False]), rows, time)
         self.assertEqual(lick, 6.)
-        self.assertEqual(lick / limit, .8)
+        self.assertEqual(lick, limit)
         np.testing.assert_allclose(mean[:7], [0, 1.5, 3, 4.5, 6, 10, 12])
         np.testing.assert_array_equal(count[:7], [2, 2, 2, 2, 2, 1, 1])
         self.assertTrue(np.isnan(sem[5:]).all())

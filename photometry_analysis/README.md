@@ -145,7 +145,7 @@ py align_photometry.py --ppd "D:\recordings\mouse01.ppd" --events "D:\behavior\e
 `trial_summary.csv`의 `end_lick_relative_s`는 Operant trial에서 보상 후 처음 기록된 lick의
 trial 상대 시각입니다. 밸브가 닫히기 전에 lick한 경우도 포함합니다.
 
-개별 Operant 그래프는 종료 lick 시각을 x축 길이의 80% 위치에 표시합니다. 종료 lick이
+개별 Operant 그래프는 종료 lick 시각을 x축의 오른쪽 끝에 표시합니다. 종료 lick이
 없는 trial은 trial 종료 시각을 사용합니다. 화면 04에서 두 평균을 선택할 수 있습니다.
 
 - **실제 시간**은 실제 초 단위를 사용합니다. 선택한 trial들의 종료 lick 시각 산술평균까지
@@ -154,7 +154,7 @@ trial 상대 시각입니다. 밸브가 닫히기 전에 lick한 경우도 포�
   사용합니다. 조정 시간 격자로 선형 보간해 평균하며 cue·reward·lick도 같은 비율로 옮깁니다.
   종료 lick이 있는 선택 trial을 사용하고, 이 조정 시간은 실제 경과 시간과 구분해 표기합니다.
 
-두 화면 모두 평균 종료 lick을 보라색 선으로 표시하고 x축 길이의 80%에 배치합니다.
+두 화면 모두 평균 종료 lick을 보라색 선으로 표시하고 x축의 오른쪽 끝에 배치합니다.
 Trial 제외를 바꾸면 평균 lick, 음영, 평균과 raster가 함께 갱신됩니다. 평균 CSV 저장 버튼은
 현재 선택한 시간 기준을 내보냅니다. 저장되는 두 PNG/SVG는 최초 제외 목록을 사용합니다.
 
