@@ -43,7 +43,7 @@ class AlignmentTests(unittest.TestCase):
                     '/tmp/first recording.ppd','/tmp/first events.csv','/tmp/second.ppd','/tmp/second.csv']), \
                 patch('tkinter.filedialog.askdirectory',return_value=directory), \
                 patch('tkinter.simpledialog.askstring',side_effect=['3,7','']), \
-                patch('tkinter.simpledialog.askinteger',side_effect=[2,1]), \
+                patch('tkinter.simpledialog.askinteger',side_effect=[2,3]) as choose_method, \
                 patch('tkinter.messagebox.showinfo'), patch('webbrowser.open'), \
                 patch('align_photometry.run') as process:
             self.assertEqual(choose_and_run(),0)
@@ -55,7 +55,9 @@ class AlignmentTests(unittest.TestCase):
             self.assertEqual(second.ppd,'/tmp/second.ppd')
             self.assertEqual(second.exclude_trials,'')
             self.assertEqual(first.method,'control_fit')
-            self.assertEqual(second.method,'session_f0')
+            self.assertEqual(second.method,'irls')
+            self.assertEqual(choose_method.call_args.kwargs['initialvalue'],3)
+            self.assertEqual(second.low_pass,3)
             self.assertNotEqual(first.out,second.out)
             self.assertEqual(Path(first.out).parent,Path(directory))
 
@@ -121,7 +123,7 @@ class AlignmentTests(unittest.TestCase):
             events.to_csv(csv,index=False)
             args=Namespace(ppd=ppd,events=csv,out=out,digital=1,signal='analog_2',
                            control='analog_1',low_pass=20,exclude_trials='2',
-                           selection_json=None,sync_pairs=None)
+                           selection_json=None,sync_pairs=None,method='session_f0')
             crop=(time>=a+b)&(time<=a*35+b)
             def preprocess(cropped, **kwargs):
                 # The pre-start and post-end samples must never enter any fit.
@@ -191,6 +193,19 @@ class AlignmentTests(unittest.TestCase):
             group_data=pd.read_csv(args.out/'early_middle_late.csv')
             ref=group_data[group_data.metric=='f0_v']['mean']
             self.assertGreater(ref.max()-ref.min(),.1)
+            # Default method using the real preprocessor: this recording has signal = 2 * control.
+            del args.method
+            args.low_pass = 3
+            args.out = root / 'irls_results'
+            with patch('align_photometry.import_ppd', return_value=data), redirect_stdout(io.StringIO()):
+                qc = run(args)
+            self.assertEqual(qc['method'], 'irls')
+            self.assertEqual(qc['irls']['tuning_constant'], 1.4)
+            self.assertAlmostEqual(qc['irls']['slope'], 2.)
+            with np.load(args.out / 'processed_data.npz') as raw:
+                np.testing.assert_array_equal(raw['ppd_sample_index'], np.flatnonzero(crop))
+                np.testing.assert_array_equal(raw['f0_v'], raw['control_fit_v'])
+                np.testing.assert_allclose(raw['dff_percent'], 0, atol=1e-10)
 
 
 

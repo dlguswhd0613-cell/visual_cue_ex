@@ -1,7 +1,6 @@
 """TTL alignment, session crop, trial averages, and an offline review report.
 
-Uses the supplied GPLv3 pyPhotometry preprocessing formulas on the cropped session.
-All dF/F values are percent (the supplied preprocess_data already multiplies by 100).
+Fits the selected reference to the cropped session. All dF/F values are percent.
 """
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from data_import import import_ppd, preprocess_data
+from data_import import DEFAULT_BISQUARE_CONSTANT, DEFAULT_LOW_PASS_HZ, import_ppd, preprocess_data
 from trial_comparison import stage_labels, save_comparisons
 
 TRIGGERS = ('CUE_TRIGGER_ON', 'REWARD_TRIGGER_ON')
@@ -171,9 +170,10 @@ def make_plots(out, session, licks, trials, relative_time, matrix, include, pair
 
 def run(args):
     out = Path(args.out)
-    method = getattr(args, 'method', 'session_f0')
-    if method not in ('session_f0', 'control_fit'):
-        raise ValueError('method must be session_f0 or control_fit')
+    method = getattr(args, 'method', 'irls')
+    if method not in ('session_f0', 'control_fit', 'irls'):
+        raise ValueError('method must be session_f0, control_fit, or irls')
+    tuning_constant = getattr(args, 'tuning_constant', DEFAULT_BISQUARE_CONSTANT)
     events = pd.read_csv(args.events, dtype={'Value': str})
     events['Arduino_ms'] = pd.to_numeric(events.Arduino_ms, errors='coerce')
     board = events[(events.Source == 'arduino') & events.Arduino_ms.notna()]
@@ -218,15 +218,17 @@ def run(args):
         components = preprocess_data(cropped, signal=args.signal, control=args.control,
                                      low_pass=args.low_pass, normalisation=None, plot=False,
                                      return_components=True,
-                                     method='control_fit' if method == 'control_fit' else 'exponential')
+                                     method='exponential' if method == 'session_f0' else method,
+                                     tuning_constant=tuning_constant)
     except (ValueError, RuntimeError) as error:
         raise ValueError(f'Session-only preprocessing failed (available duration {mask.sum()/fs:.3f}s): {error}') from error
     processed = np.full(ppd_time.shape, np.nan)
     f0 = np.full(ppd_time.shape, np.nan)
     session_f0 = None
-    if method == 'control_fit':
+    if method != 'session_f0':
         f0[mask] = components['est_motion']
-        preprocessing_description = f'{args.low_pass:g}Hz 저역통과 → 필터링된 control을 signal에 선형회귀 → 100 × (signal_filt − 회귀값) / 회귀값. 분모는 시간에 따라 변합니다.'
+        regression = f'Tukey bisquare IRLS (c={tuning_constant:g})' if method == 'irls' else 'OLS'
+        preprocessing_description = f'{args.low_pass:g}Hz 저역통과 → {regression}로 control을 signal에 회귀 → 100 × (signal_filt − 회귀값) / 회귀값. 분모는 시간에 따라 변합니다.'
     else:
         # Include all recorded samples and ITIs in one session denominator.
         session_f0 = float(np.mean(components['signal_expfit']))
@@ -256,7 +258,7 @@ def run(args):
                             'lick_count': lick_count[mask],
                             'digital_1': data['digital_1'][mask], 'digital_2': data['digital_2'][mask],
                             'trial_id': all_trial_ids[mask]})
-    if method == 'control_fit':
+    if method != 'session_f0':
         session['control_fit_v'] = f0[mask]
     else:
         session['bleaching_fit_v'] = components['signal_expfit']
@@ -310,9 +312,9 @@ def run(args):
           'signal_channel': args.signal, 'control_channel': args.control, 'low_pass_hz': args.low_pass,
           'method': method,
           'preprocessing': preprocessing_description,
-          'normalisation': 'dF/F percent; denominator is control_fit(t)' if method == 'control_fit' else 'dF/F percent; one constant session denominator',
+          'normalisation': 'dF/F percent; denominator is fitted control(t)' if method != 'session_f0' else 'dF/F percent; one constant session denominator',
           'session_f0_v': session_f0,
-          'denominator_scope': 'Session-wide fit, including ITIs; fixed before trial exclusions. '+('Time-varying fitted control reference.' if method == 'control_fit' else 'Constant mean exponential fit.'),
+          'denominator_scope': 'Session-wide fit, including ITIs; fixed before trial exclusions. '+('Constant mean exponential fit.' if method == 'session_f0' else 'Time-varying fitted control reference.'),
           'fit_scope': 'SESSION_START through last completed TRIAL_END, cropped BEFORE filtering and all fits; trial exclusions affect averages only.',
           'preprocessing_window_ppd_s': [float(selected_time[0]), float(selected_time[-1])],
           'stage_definition': 'Chronological completed trials before exclusions: floor(N/3), floor(2N/3); 100 -> 33/33/34.',
@@ -321,6 +323,10 @@ def run(args):
                              'Primary average uses common support of all included trials; available-support CSV is separate.',
           'mean_of_trial_means_percent': float(trials.loc[include, 'mean_dff_percent'].mean()) if include.any() else None,
           'clipping_samples': {k: int(v.sum()) for k,v in data.items() if k.endswith('_clipping')}}
+    if method == 'irls':
+        qc['irls'] = dict(weight_function='Tukey bisquare', tuning_constant=tuning_constant,
+                          iterations=components['irls_iterations'], slope=components['regression_slope'],
+                          intercept_v=components['regression_intercept'])
     out.mkdir(parents=True, exist_ok=True)
     session.to_csv(out/'processed_data.csv', index=False, float_format='%.9g')
     session[session.trial_id > 0].to_csv(out/'trials_only.csv', index=False, float_format='%.9g')
@@ -369,9 +375,11 @@ if __name__ == '__main__':
     parser.add_argument('--digital', type=int, choices=(1,2), default=1)
     parser.add_argument('--signal', default='analog_2')
     parser.add_argument('--control', default='analog_1')
-    parser.add_argument('--low-pass', type=float, default=20)
-    parser.add_argument('--method', choices=('session_f0', 'control_fit'), default='session_f0',
-                        help='session_f0: exponential correction and constant F0; control_fit: direct filtered-control regression and time-varying reference')
+    parser.add_argument('--low-pass', type=float, default=DEFAULT_LOW_PASS_HZ, help='Low-pass cutoff in Hz (default 3)')
+    parser.add_argument('--method', choices=('session_f0', 'control_fit', 'irls'), default='irls',
+                        help='irls: Tukey bisquare (default); session_f0: exponential correction; control_fit: OLS')
+    parser.add_argument('--tuning-constant', type=float, default=DEFAULT_BISQUARE_CONSTANT,
+                        help='Tukey bisquare IRLS tuning constant (default 1.4)')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--exclude-trials', default='', help='Example: 3,7,12-15')
     group.add_argument('--selection-json', help='Saved trial_selection.json for these exact input files')

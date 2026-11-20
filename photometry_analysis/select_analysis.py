@@ -27,20 +27,22 @@ def choose_and_run():
                                          initialvalue='', parent=root)
         if excluded is None:
             return 0
+        from align_photometry import run
+        from data_import import DEFAULT_BISQUARE_CONSTANT, DEFAULT_LOW_PASS_HZ
         method_number = simpledialog.askinteger(
             '5. dF/F 계산 방법',
             '1: exponential 보정 + 세션 공통 F₀\n'
-            '2: 필터링한 control 회귀값으로 나누기\n'
-            '   100 × (signal_filt − 회귀값) / 회귀값',
-            initialvalue=1, minvalue=1, maxvalue=2, parent=root)
+            '2: control 일반 회귀 (OLS)\n'
+            f'3: control 강건 회귀 (Tukey bisquare IRLS, c={DEFAULT_BISQUARE_CONSTANT:g}, 기본값)\n'
+            f'저역통과 필터: {DEFAULT_LOW_PASS_HZ:g} Hz',
+            initialvalue=3, minvalue=1, maxvalue=3, parent=root)
         if method_number is None:
             return 0
-        method = 'control_fit' if method_number == 2 else 'session_f0'
-        from align_photometry import run
+        method = {1: 'session_f0', 2: 'control_fit', 3: 'irls'}[method_number]
         out = Path(destination) / (Path(ppd).stem + '_aligned_' + datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
         print(f'PPD: {ppd}\nEvents: {events}\nResults: {out}\nExcluded: {excluded or "none"}', flush=True)
         run(Namespace(ppd=ppd, events=events, out=str(out), digital=1, signal='analog_2',
-                      control='analog_1', low_pass=20, exclude_trials=excluded, sync_pairs=None,
+                      control='analog_1', low_pass=DEFAULT_LOW_PASS_HZ, exclude_trials=excluded, sync_pairs=None,
                       selection_json=None, method=method))
         webbrowser.open((out/'review.html').as_uri())
         messagebox.showinfo('분석 완료', f'결과가 저장되었습니다.\n{out}\n\n열린 HTML에서 trial을 추가로 제외하고 평균 CSV를 저장할 수 있습니다.')

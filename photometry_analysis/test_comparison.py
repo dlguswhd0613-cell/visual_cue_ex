@@ -6,7 +6,7 @@ import numpy as np
 from scipy.signal import butter, filtfilt
 from align_photometry import average_trials
 from trial_comparison import stage_labels, comparison_curves
-from data_import import preprocess_data, PreprocessingError
+from data_import import preprocess_data, PreprocessingError, _bisquare_fit
 
 
 class ComparisonTests(unittest.TestCase):
@@ -40,7 +40,7 @@ class ComparisonTests(unittest.TestCase):
         fs=130;t=np.arange(120*fs)/fs
         control=1+.4*np.exp(-t/300)+.1*np.sin(t*3)
         signal=2+.8*np.exp(-t/300)+.07*np.sin(t*3)+.01*np.cos(t*6)
-        kwargs=dict(signal=signal,control=control,sampling_rate=fs,low_pass=20)
+        kwargs=dict(signal=signal,control=control,sampling_rate=fs,low_pass=20,method='exponential')
         original=preprocess_data(**kwargs)
         components=preprocess_data(**kwargs,return_components=True)
         np.testing.assert_array_equal(original,components['signal_norm'])
@@ -71,6 +71,49 @@ class ComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(PreprocessingError,'denominator must be finite and positive'):
             preprocess_data(signal=-2*control,control=control,sampling_rate=130,
                             method='control_fit',normalisation='dF/F')
+
+    def test_bisquare_recovers_line_in_presence_of_transients(self):
+        # At each control level the inlier residuals are symmetric about a known line.
+        x = np.repeat([1., 2., 3.], 100)
+        sample = np.random.default_rng(372).normal(scale=.04, size=50)
+        noise = np.tile(np.r_[sample, -sample], 3)
+        y = 1.5 + .8 * x + noise
+        x = np.r_[x, np.full(10, 3.)]
+        y = np.r_[y, np.full(10, 6.)]
+        slope, intercept, iterations = _bisquare_fit(x, y, 1.4)
+        self.assertGreater(iterations, 1)
+        np.testing.assert_allclose([slope, intercept], [.8, 1.5], atol=1e-7)
+        self.assertGreater(np.polyfit(x, y, 1)[0] - slope, .05)
+
+    def test_irls_default_filter_percent_and_tuning(self):
+        fs = 130
+        t = np.arange(30 * fs) / fs
+        control = 1 + .1 * np.sin(t) + .02 * np.cos(2 * np.pi * 15 * t)
+        signal = 1.5 + .8 * control + .035 * np.sin(2 * t) + .2 * (np.sin(t) > .98)
+        args = dict(signal=signal, control=control, sampling_rate=fs, return_components=True)
+        with patch('data_import._fit_exponential', side_effect=AssertionError('unexpected bleaching fit')):
+            result = preprocess_data(**args)
+            explicit = preprocess_data(**args, method='irls', low_pass=3, tuning_constant=1.4)
+            less_aggressive = preprocess_data(**args, tuning_constant=4.685)
+        np.testing.assert_array_equal(result['signal_norm'], explicit['signal_norm'])
+        self.assertGreater(np.max(np.abs(result['est_motion'] - less_aggressive['est_motion'])), .001)
+        b, a = butter(2, 3, fs=fs)
+        fitted = result['regression_intercept'] + result['regression_slope'] * filtfilt(b, a, control)
+        np.testing.assert_allclose(result['normalisation_f0'], fitted)
+        np.testing.assert_allclose(result['signal_norm'], 100 * (filtfilt(b, a, signal) - fitted) / fitted)
+
+    def test_irls_validates_degenerate_inputs_and_fits_an_exact_line(self):
+        x = np.arange(100.)
+        y = 2 + 5 * x
+        np.testing.assert_allclose(_bisquare_fit(x, y, 1.4)[:2], [5., 2.], atol=1e-12)
+        for c in (0., -1., np.nan, np.inf):
+            with self.subTest(c=c), self.assertRaisesRegex(ValueError, 'tuning constant'):
+                _bisquare_fit(x, y, c)
+        with self.assertRaisesRegex(PreprocessingError, 'constant control'):
+            _bisquare_fit(np.ones_like(x), y, 1.4)
+        y[0] = np.nan
+        with self.assertRaisesRegex(PreprocessingError, 'finite'):
+            _bisquare_fit(x, y, 1.4)
 
 if __name__=='__main__':
     unittest.main()

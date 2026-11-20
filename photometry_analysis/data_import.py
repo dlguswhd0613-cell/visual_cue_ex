@@ -10,12 +10,15 @@ from scipy.optimize import curve_fit
 from scipy.stats import linregress, zscore
 from packaging.version import parse as parse_version
 
+DEFAULT_LOW_PASS_HZ = 3.0
+DEFAULT_BISQUARE_CONSTANT = 1.4
+
 # ----------------------------------------------------------------------------------
 # Import ppd
 # ----------------------------------------------------------------------------------
 
 
-def import_ppd(file_path, low_pass=20, high_pass=0.01):
+def import_ppd(file_path, low_pass=DEFAULT_LOW_PASS_HZ, high_pass=0.01):
     """Function to import pyPhotometry binary data files into Python. The high_pass
     and low_pass arguments determine the frequency in Hz of highpass and lowpass
     filtering applied to the filtered analog signals. To disable highpass or lowpass
@@ -138,8 +141,51 @@ def import_ppd(file_path, low_pass=20, high_pass=0.01):
 # ----------------------------------------------------------------------------------
 
 
-class PreprocessingError(Exception):
+class PreprocessingError(RuntimeError):
     pass
+
+
+def _bisquare_fit(control, signal, tuning_constant):
+    """Fit signal = intercept + slope * control by Tukey bisquare IRLS."""
+    x = np.asarray(control, dtype=float)
+    y = np.asarray(signal, dtype=float)
+    if x.ndim != 1 or x.shape != y.shape or x.size < 3:
+        raise PreprocessingError("IRLS needs paired 1-D signal and control with at least three samples.")
+    if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
+        raise PreprocessingError("IRLS requires finite signal and control samples.")
+    if not np.isfinite(tuning_constant) or tuning_constant <= 0:
+        raise ValueError("The bisquare tuning constant must be finite and positive.")
+
+    # Center/scale the predictor for a well-conditioned design with an intercept.
+    x_mean, x_scale = x.mean(), x.std()
+    eps = np.finfo(float).eps
+    if x_scale <= 64 * eps * np.max(np.abs(x)):
+        raise PreprocessingError("IRLS cannot estimate a slope from a constant control.")
+    x_std = (x - x_mean) / x_scale
+    design = np.column_stack((np.ones_like(x), x_std))
+    beta = np.linalg.lstsq(design, y, rcond=None)[0]
+    leverage = (1 + x_std**2) / x.size
+    leverage_factor = np.sqrt(1 - np.minimum(leverage, 0.9999))
+    scale_floor = max(np.finfo(float).tiny, 32 * eps * np.max(np.abs(y)))
+    for iteration in range(1, 201):
+        residual = (y - (beta[0] + beta[1] * x_std)) / leverage_factor
+        # Residual MAD about zero, dropping p-1 smallest magnitudes (p=2).
+        magnitude = np.abs(residual)
+        scale = max(np.median(np.partition(magnitude, 1)[1:]) / 0.6745, scale_floor)
+        u = np.clip(residual / scale / tuning_constant, -1., 1.)
+        weights = (1. - u**2)**2
+        root_w = np.sqrt(weights)
+        updated, _, rank, _ = np.linalg.lstsq(design * root_w[:, None], y * root_w, rcond=None)
+        if rank < 2:
+            raise PreprocessingError("Bisquare weights leave insufficient control variation to fit IRLS.")
+        tolerance = scale_floor + 1e-8 * np.maximum(np.abs(updated), scale)
+        converged = np.all(np.abs(updated - beta) <= tolerance)
+        beta = updated
+        if converged:
+            slope = float(beta[1] / x_scale)
+            intercept = float(beta[0] - slope * x_mean)
+            return slope, intercept, iteration
+    raise PreprocessingError("Bisquare IRLS did not converge within 200 iterations.")
 
 
 def preprocess_data(
@@ -148,20 +194,20 @@ def preprocess_data(
     control="analog_1",
     sampling_rate=None,
     median_filter=False,
-    low_pass=10,
+    low_pass=DEFAULT_LOW_PASS_HZ,
     normalisation="dF/F",
     plot=False,
     fig_path=None,
     return_components=False,
-    method="exponential",
+    method="irls",
+    tuning_constant=DEFAULT_BISQUARE_CONSTANT,
 ):
-    """Preprocess photometry data by applyling the following steps in order:
+    """Preprocess photometry data by applying the following steps in order:
 
         1. Optional median filtering to remove noise spikes.
         2. Low pass filtering to reduce noise.
-        3. Correction for photobleaching by subtracting a double exponential fit.
-        4. Motion correction by subtracting linear fit of control channel from signal channel.
-           Steps 1-3 are applied to signal and control channels prior to motion correction.
+        3. For method="exponential" only, subtract double exponential fits.
+        4. Fit control to signal and subtract the fitted reference.
         5. Optional normalisation by computing  dF/F or z-score.
 
     Adapted from https://github.com/ThomasAkam/photometry_preprocessing
@@ -174,22 +220,23 @@ def preprocess_data(
                  a numpy array containg the control channel data.
         sampling_rate : Sampling rate in Hz, only used if data_dict is not provided.
         median_filter : Width of median filter window in samples, set False to disable median filtering.
-        lowpass : Frequency of low pass filtering in Hz.
+        low_pass : Low-pass cutoff in Hz (default 3).
         normalisation : Type of normalisation to apply; 'dF/F', 'z-score' or None.
         plot : Set True to plot raw and processed signals.
         fig_path : Specify a file path (including file extension) to save the plotted figure.
-        method : 'exponential' for bleaching subtraction before regression, or
-                 'control_fit' to regress filtered control directly onto filtered signal.
+        method : 'irls' (default) uses bisquare robust regression with an intercept;
+                 'control_fit' uses OLS; 'exponential' subtracts bleaching before OLS.
+        tuning_constant : IRLS bisquare constant (default 1.4).
     Returns:
         signal_norm : Numpy array containing the signal after preprocessing and normalisation.
         With return_components=True, returns a dict containing signal_norm,
         signal_expfit, control_expfit, signal_mc, est_motion and normalisation_f0.
-        In control_fit mode, exponential components are None; normalisation_f0
+        In irls and control_fit modes, exponential components are None; normalisation_f0
         is the time-varying fitted control reference at the input sample rate.
     """
     assert normalisation in ("dF/F", "z-score", None), "normalisation must be 'dF/F', 'z-score' or None"
-    if method not in ("exponential", "control_fit"):
-        raise ValueError("method must be 'exponential' or 'control_fit'")
+    if method not in ("exponential", "control_fit", "irls"):
+        raise ValueError("method must be exponential, control_fit, or irls")
     if data_dict:  # Extract variables from data dict.
         signal = data_dict[signal]
         control = data_dict[control]
@@ -205,7 +252,7 @@ def preprocess_data(
     # Photobleaching correction by subtracting double exponential fit.
     t = np.arange(len(signal)) / sampling_rate
     signal_expfit = control_expfit = None
-    if method == "control_fit":
+    if method != "exponential":
         signal_bc = signal_filt
         control_bc = control_filt
     else:
@@ -214,10 +261,14 @@ def preprocess_data(
         signal_bc = signal_filt - signal_expfit
         control_bc = control_filt - control_expfit
     # Motion correction.
-    slope, intercept, r_value, p_value, std_err = linregress(x=control_bc, y=signal_bc)
+    iterations = None
+    if method == "irls":
+        slope, intercept, iterations = _bisquare_fit(control_bc, signal_bc, tuning_constant)
+    else:
+        slope, intercept, *_ = linregress(x=control_bc, y=signal_bc)
     est_motion = intercept + slope * control_bc
     signal_mc = signal_bc - est_motion
-    normalisation_f0 = est_motion if method == "control_fit" else signal_expfit
+    normalisation_f0 = signal_expfit if method == "exponential" else est_motion
     # Normalisation.
     if normalisation == "dF/F":
         if not np.all(np.isfinite(normalisation_f0)) or np.any(normalisation_f0 <= 0):
@@ -256,11 +307,12 @@ def preprocess_data(
         plt.ylim(2 * np.percentile(signal_bc_dec, [1, 99]))
         x = np.array(plt.xlim())
         plt.plot(x, intercept + slope * x)
-        plt.xlabel("Filtered control" if method == "control_fit" else "Control (post bleaching correction)")
-        plt.ylabel("Filtered signal" if method == "control_fit" else "Signal (post bleaching correction)")
+        plt.xlabel("Control (post bleaching correction)" if method == "exponential" else "Filtered control")
+        plt.ylabel("Signal (post bleaching correction)" if method == "exponential" else "Filtered signal")
         ax2.text(x=0.05, y=0.95, s=f"slope: {slope :.2f}", transform=ax2.transAxes)
         plt.subplot(2, 3, 6)
-        plt.plot(t[: 10 * sampling_rate], signal_norm[: 10 * sampling_rate])
+        first_ten_seconds = slice(0, int(10 * sampling_rate))
+        plt.plot(t[first_ten_seconds], signal_norm[first_ten_seconds])
         plt.xlim(0, 10)
         plt.xlabel("Time (seconds)")
         plt.ylabel(f"Processed signal {normalisation}")
@@ -271,7 +323,8 @@ def preprocess_data(
     if return_components:
         return dict(signal_norm=signal_norm, signal_expfit=signal_expfit,
                     control_expfit=control_expfit, signal_mc=signal_mc,
-                    est_motion=est_motion, normalisation_f0=normalisation_f0)
+                    est_motion=est_motion, normalisation_f0=normalisation_f0,
+                    regression_slope=slope, regression_intercept=intercept, irls_iterations=iterations)
     return signal_norm
 
 
