@@ -4,6 +4,21 @@ import pandas as pd
 
 STAGES = ('early', 'middle', 'late')
 METRICS = {'dff_percent': 'dF/F (%)', 'f0_v': 'F0 (V)', 'signal_v': 'Signal (V)'}
+CUE_COLOR = '#45b8c5'
+CUE_ALPHA = .18
+
+
+def valid_cue_trials(trials):
+    on, off = trials.cue_relative_s, trials.cue_off_relative_s
+    return trials.loc[np.isfinite(on) & np.isfinite(off) & (off > on)]
+
+
+def shade_average_cue(ax, trials):
+    cues = valid_cue_trials(trials)
+    if not cues.empty:
+        ax.axvspan(cues.cue_relative_s.median(), cues.cue_off_relative_s.median(),
+                   color=CUE_COLOR, alpha=CUE_ALPHA, linewidth=0, zorder=0,
+                   label='Cue ON–OFF (median)')
 
 
 def stage_labels(n):
@@ -33,6 +48,7 @@ def save_comparisons(out, trials, time, matrices, include, average, constant_f0=
     rows = []
     fig, axes = plt.subplots(3, 1, figsize=(11, 10), constrained_layout=True)
     for ax, (metric, title) in zip(axes, METRICS.items()):
+        shade_average_cue(ax, trials.loc[include])
         curves, support = comparison_curves(matrices[metric], include, labels, average)
         for name, color in zip(STAGES, colors):
             mean, sem, count, n = curves[name]

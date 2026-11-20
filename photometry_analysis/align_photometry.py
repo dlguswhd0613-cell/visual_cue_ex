@@ -20,7 +20,9 @@ import numpy as np
 import pandas as pd
 
 from data_import import DEFAULT_BISQUARE_CONSTANT, DEFAULT_LOW_PASS_HZ, import_ppd, preprocess_data
-from trial_comparison import stage_labels, save_comparisons
+from trial_comparison import (
+    CUE_COLOR, CUE_ALPHA, valid_cue_trials, shade_average_cue, stage_labels, save_comparisons,
+)
 
 TRIGGERS = ('CUE_TRIGGER_ON', 'REWARD_TRIGGER_ON')
 
@@ -127,6 +129,12 @@ def make_plots(out, session, licks, trials, relative_time, matrix, include, pair
     axes[3].vlines(licks.time_session_s, 0, 1, color='#302a47', lw=.8)
     axes[3].set(ylim=(-.1, 1.1), yticks=[], ylabel='Lick', xlabel='Time since SESSION_START (s)')
     axes[3].set_xlim(0, trials.end_session_s.max())
+    for row in valid_cue_trials(trials).itertuples():
+        for ax in axes:
+            ax.axvspan(row.start_session_s + row.cue_relative_s,
+                       row.start_session_s + row.cue_off_relative_s,
+                       color=CUE_COLOR, alpha=CUE_ALPHA, linewidth=0, zorder=0)
+    axes[0].set_title('Shaded bands show cue ON–OFF')
     if session.time_session_s.iloc[0] > 0:
         for ax in axes:
             ax.axvspan(0, session.time_session_s.iloc[0], color='#d1d5db', alpha=.6)
@@ -140,6 +148,8 @@ def make_plots(out, session, licks, trials, relative_time, matrix, include, pair
     sem[~common] = np.nan
     fig, axes = plt.subplots(3, 1, figsize=(11, 9), sharex=True, constrained_layout=True,
                              gridspec_kw={'height_ratios': [2, 1, 1.5]})
+    for ax in axes[:2]:
+        shade_average_cue(ax, trials.loc[include])
     axes[0].fill_between(relative_time, mean-sem, mean+sem, color='#537fb9', alpha=.25, label='Mean ± SEM')
     axes[0].plot(relative_time, mean, color='#24529c', lw=2, label=f'Mean ({include.sum()} trials)')
     for key, label, color in [('cue_relative_s', 'Cue ACK (median)', '#137d68'),
@@ -150,11 +160,16 @@ def make_plots(out, session, licks, trials, relative_time, matrix, include, pair
     axes[0].legend(fontsize=8)
     axes[1].plot(relative_time[common], n[common], color='#24529c')
     axes[1].set_ylabel('Contributing trials')
+    for row in valid_cue_trials(trials.loc[include]).itertuples():
+        axes[2].fill_betweenx([row.trial_id - .45, row.trial_id + .45],
+                              row.cue_relative_s, row.cue_off_relative_s,
+                              color=CUE_COLOR, alpha=CUE_ALPHA, linewidth=0, zorder=0)
     for row in trials.loc[include].itertuples():
         lt = licks.loc[licks.trial_id == row.trial_id, 'time_session_s'].to_numpy() - row.start_session_s
         axes[2].scatter(lt, np.full(len(lt), row.trial_id), marker='|', s=14, color='#302a47')
     axes[2].set(xlabel='Time from TRIAL_START (s; photometry clock)', ylabel='Lick / trial ID',
                 xlim=(0, relative_time[np.flatnonzero(common)[-1]] if common.any() else relative_time[-1]))
+    axes[2].set_title('Shaded cue ON–OFF for each included trial', fontsize=10)
     fig.suptitle('Trial-aligned dF/F average and lick raster; no time warping')
     fig.savefig(out / 'dff_average.png', dpi=180)
     fig.savefig(out / 'dff_average.svg')

@@ -39,6 +39,9 @@ function plotComparison(id,curves,metric,window){
   for(const c of curves)for(let j=0;j<c.mean.length;j++)if(finite(c.mean[j]))values.push(c.mean[j]-(c.sem[j]||0),c.mean[j]+(c.sem[j]||0));
   const yr=domain(values),[px,py]=axes(ctx,box,window,yr,metricNames[metric],'TRIAL_START 이후 (초)');
   if(!values.length){ctx.textAlign='left';ctx.fillText('선택한 trial들의 공통 데이터 구간이 없습니다.',box.l+12,box.t+30);return;}
+  const trialIds=new Set(curves.flatMap(c=>c.trial_ids));
+  const rows=D.trials.filter(r=>trialIds.has(r.trial_id));
+  cueSpan(ctx,box,window,...medianCue(rows));
   for(const c of curves){
     ctx.fillStyle=c.color+'25';let j=0;
     while(j<c.mean.length){
