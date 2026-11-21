@@ -24,13 +24,20 @@ def validate_config(config):
         "stimulus": {"diameter_px", "cycles_per_patch", "orientation_deg", "contrast",
                      "sigma_fraction", "phase_deg"},
     }
+    shape = "gabor"
+    if isinstance(config, dict) and isinstance(config.get("stimulus"), dict):
+        shape = config["stimulus"].get("type", "gabor")
+    if shape == "square_grating":
+        expected["stimulus"] = {"type", "visual_angle_deg", "viewing_distance_cm",
+                                "screen_width_cm", "screen_width_px", "mean_gray", "contrast",
+                                "spatial_frequency_cpd", "temporal_frequency_hz", "animation_rate_hz"}
     if (not isinstance(config, dict) or not set(expected) <= set(config)
             or set(config) - set(expected) - {"photometry"}):
         raise ValueError("Config requires serial, session, display, stimulus; optional photometry")
     if "photometry" in config:
         expected["photometry"] = {"enabled", "cue_lead_ms", "reward_lead_ms", "pulse_ms"}
     for section, keys in expected.items():
-        optional = {"task", "iti_distribution", "iti_exponential_scale_s"} if section == "session" else set()
+        optional = {"task", "cue_protocol", "iti_distribution", "iti_exponential_scale_s"} if section == "session" else set()
         if (not isinstance(config[section], dict) or not keys <= set(config[section])
                 or set(config[section]) - keys - optional):
             raise ValueError(f"Unexpected or missing keys in {section}; expected {sorted(keys)}")
@@ -47,6 +54,14 @@ def validate_config(config):
                             ("iti_max_s", 0, 65535)):
         integer("session", name, low, high)
     session = config["session"]
+    protocol = session.get("cue_protocol", "all_rewarded")
+    if protocol not in ("all_rewarded", "square_discrimination"):
+        raise ValueError("session.cue_protocol must be all_rewarded or square_discrimination")
+    if shape == "square_grating" and protocol != "square_discrimination":
+        raise ValueError("square_grating requires session.cue_protocol=square_discrimination")
+    if protocol == "square_discrimination":
+        if shape != "square_grating" or session["trials"] % 2:
+            raise ValueError("square_discrimination requires square stimuli and an even trial count (equal CS+/CS-)")
     if session.get("task", "operant") not in ("pavlovian", "operant"):
         raise ValueError("session.task must be pavlovian or operant")
     if session.get("iti_distribution", "uniform") not in ("uniform", "exponential"):
@@ -85,8 +100,31 @@ def validate_config(config):
                             ("window_height", 64, 8192), ("background_gray", 0, 255),
                             ("max_cue_overrun_ms", 1, 500)):
         integer("display", name, low, high)
-    integer("stimulus", "diameter_px", 16, 4096)
     stimulus = config["stimulus"]
+    if shape == "square_grating":
+        for key in ("visual_angle_deg", "viewing_distance_cm", "screen_width_cm",
+                    "spatial_frequency_cpd", "temporal_frequency_hz"):
+            value = stimulus[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"stimulus.{key} must be finite and >0")
+        if stimulus["visual_angle_deg"] >= 180:
+            raise ValueError("stimulus.visual_angle_deg must be <180")
+        integer("stimulus", "screen_width_px", 64, 16384)
+        integer("stimulus", "mean_gray", 1, 254)
+        integer("stimulus", "animation_rate_hz", 10, 240)
+        contrast = stimulus["contrast"]
+        if isinstance(contrast, bool) or not isinstance(contrast, (int, float)) or not math.isfinite(contrast) or not 0 < contrast <= 1:
+            raise ValueError("stimulus.contrast must be >0 and <=1")
+        if stimulus["temporal_frequency_hz"] >= stimulus["animation_rate_hz"] / 2:
+            raise ValueError("Temporal frequency must be below half the animation rate")
+        degrees_per_pixel = math.degrees(stimulus["screen_width_cm"] / stimulus["screen_width_px"] / stimulus["viewing_distance_cm"])
+        if stimulus["spatial_frequency_cpd"] * degrees_per_pixel >= .5:
+            raise ValueError("Spatial frequency exceeds pixel sampling limit")
+        from .stimulus import square_geometry
+        if not 16 <= square_geometry(stimulus)["diagonal_px"] <= 4096:
+            raise ValueError("Square diagonal must be 16..4096 pixels; check screen calibration")
+        return
+    integer("stimulus", "diameter_px", 16, 4096)
     for key in ("cycles_per_patch", "orientation_deg", "contrast", "sigma_fraction", "phase_deg"):
         value = stimulus[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):

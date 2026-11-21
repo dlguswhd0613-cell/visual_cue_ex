@@ -11,7 +11,7 @@ from visualcue.schedule import generate_schedule, load_schedule, save_schedule
 
 class TaskTests(unittest.TestCase):
     def setUp(self):
-        self.config = load_config()
+        self.config = load_config(Path(__file__).resolve().parents[1] / "config" / "gabor.json")
 
     def test_requested_timeline_and_all_rewarded_schedule(self):
         config = self.config
@@ -86,7 +86,7 @@ class TaskTests(unittest.TestCase):
                              ("iti_distribution", "unknown"), ("iti_exponential_scale_s", 0),
                              ("iti_exponential_scale_s", True), ("iti_exponential_scale_s", float("nan"))):
             with self.subTest(field=field):
-                config = load_config()
+                config = load_config(Path(__file__).resolve().parents[1] / "config" / "gabor.json")
                 config["session"][field] = value
                 with self.assertRaises(ValueError):
                     validate_config(config)
@@ -114,7 +114,7 @@ class TaskTests(unittest.TestCase):
                              ("reward_lead_ms", 3001), ("cue_lead_ms", -1),
                              ("pulse_ms", 0), ("pulse_ms", 1001), ("pulse_ms", True)):
             with self.subTest(field=field, value=value):
-                config = load_config()
+                config = load_config(Path(__file__).resolve().parents[1] / "config" / "gabor.json")
                 config["photometry"][field] = value
                 with self.assertRaises(ValueError):
                     validate_config(config)

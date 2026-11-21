@@ -1,6 +1,6 @@
 # Headfixed visual cue tasks
 
-고정된 쥐에게 Raspberry Pi 4B의 7인치 화면으로 Gabor 자극을 제시하고, Arduino Uno로 보상 밸브와 lick 센서를 제어합니다. Python 프로그램은 화면과 기록을 담당하고, Arduino는 기존 배선에서 밸브·센서·TTL을 담당합니다. 두 장치는 USB로 연결합니다.
+고정된 쥐에게 Raspberry Pi 4B의 7인치 화면으로 정사각형·마름모 윤곽의 움직이는 줄무늬를 제시하고, Arduino Uno로 보상 밸브와 lick 센서를 제어합니다. Python 프로그램은 화면과 기록을 담당하고, Arduino는 기존 배선에서 밸브·센서·TTL을 담당합니다. 두 장치는 USB로 연결합니다.
 
 처음 설치할 때는 [Raspberry Pi 설치·실행 안내](docs/raspberry_pi.md)를 따라 진행하세요. 클라우드에서 만드는 파일을 실제 Raspberry Pi에 복사하고, 새 Arduino 스케치를 실제 Uno에 업로드해야 장치에서 실행됩니다.
 
@@ -8,9 +8,11 @@
 
 ## 실험 동작
 
-대기·시행 사이·실험 종료 후에는 검정 화면이 유지됩니다. 자극은 화면 정중앙(가로 50%, 세로 50%)에 놓인 원형 Gabor 패치이며, 흑백 줄무늬가 공간상으로 번갈아 배치된 **정지 무늬**입니다. 움직임이나 깜빡임은 없습니다. 가장자리는 Gaussian 형태로 검정 배경에 부드럽게 섞입니다.
+대기·시행 사이·실험 종료 후에는 검정 화면이 유지됩니다. 화면 정중앙에 **CS+는 45° 마름모, CS−는 0° 정사각형**을 제시합니다. 두 도형 안의 수평 줄무늬는 동일한 위상과 속도로 아래로 움직입니다. 대비 50%, 시간주파수 1.5Hz, 공간주파수 0.05 cycle/degree입니다.
 
-기본 세션은 100회이며 모든 시행에서 보상을 제공합니다. **세션 시간 제한은 없으며, 설정된 모든 시행을 완료하면 종료합니다.** 세션 시작 시 기존 코드와 같은 LED/TTL 시작 신호를 보낸 뒤 최초 대기 90초가 시작됩니다. 이후 각 시행의 시간표는 다음과 같습니다.
+한 세션은 **CS+ 50회(보상), CS− 50회(무보상), 총 100회**이며 무작위로 섞습니다. 두 도형의 대각선은 거리 15cm에서 시야각 20°입니다. 논문의 적용 범위, 화면 크기 보정, 시행표와 로그는 [도형 변별 실험 안내](docs/shape_discrimination.md)에 정리했습니다. 기존 Gabor는 `--config config/gabor.json`으로 사용할 수 있습니다.
+
+**세션 시간 제한은 없으며, 설정된 모든 시행을 완료하면 종료합니다.** 세션 시작 시 기존 LED/TTL 시작 신호를 보낸 뒤 최초 대기 90초가 시작됩니다. 이후 각 시행의 시간표는 다음과 같습니다.
 
 `HEADFIXED_PYTHON.py`에서 실행 옵션으로 task를 선택합니다.
 
@@ -28,18 +30,18 @@ DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id B67 --task
 DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id B67 --task 2 --exit-when-done
 ```
 
-기존 `--schedule` 옵션도 함께 사용할 수 있습니다. 선택 결과는 터미널에 `Task 1: Pavlovian task` 또는 `Task 2: Operant task`로 표시되며, `metadata.json`의 `task`, `task_number`, `trial_end_rule`에 저장됩니다.
+도형용으로 새로 만든 시행표를 `--schedule`로 지정할 수 있습니다. 기존 100% 보상 Gabor 시행표는 기본 설정에 사용할 수 없습니다. 선택 결과는 터미널에 `Task 1: Pavlovian task` 또는 `Task 2: Operant task`로 표시되며, `metadata.json`의 `task`, `task_number`, `trial_end_rule`에 저장됩니다.
 
 | 시행 시작 기준 | 화면 및 장치 동작 |
 |---|---|
 | 0초 | 시행 시작, 검정 화면 |
 | 0.9초 | D7 cue 사전 트리거 20ms |
-| 1초 | 화면 정중앙에 Gabor 자극 표시 |
+| 1초 | 화면 정중앙에 해당 trial의 도형·움직이는 줄무늬 표시 |
 | 3초 | 자극 종료, 검정 화면 복귀 |
-| 5.9초 | D7 reward 사전 트리거 20ms |
-| 6초 | 자극 종료 예정 시점에서 3초 후, 보상 밸브 30ms 개방 |
-| 10초 (1번 Pavlovian) | 보상 6초 + 관찰 4초 후 lick과 관계없이 시행 종료 |
-| 보상 후 첫 lick (2번 Operant) | 밸브가 닫혔다면 즉시 시행 종료; 개방 중 lick이면 30ms 개방 완료 후 종료 |
+| 5.9초 | CS+에서만 D7 reward 사전 트리거 20ms |
+| 6초 | CS+ 보상 밸브 30ms 개방, CS−는 보상 생략 |
+| 10초 (Pavlovian 전체 및 Operant CS−) | 보상 6초 + 관찰 4초 후 lick과 관계없이 시행 종료 |
+| 보상 후 첫 lick (Operant CS+) | 밸브가 닫혔다면 즉시 시행 종료; 개방 중 lick이면 30ms 개방 완료 후 종료 |
 | 시행 종료 직후 | 검정 화면에서 ITI 10–20초 시작 (감소하는 지수분포) |
 | ITI 경과 후 | 다음 시행 시작 |
 
@@ -55,9 +57,7 @@ ITI 시작 시 터미널에는 `ITI_START: 2`(다음 시행 번호), `ITI_DURATI
 
 **Pavlovian을 선택하려면 Pi의 Python을 업데이트하고 최신 Uno 스케치를 한 번 업로드해야 합니다.** 이후에는 같은 스케치에서 `--task`로 두 모드를 선택합니다. 기존 lick 종료 스케치(`771cc24`)는 Operant를 계속 실행할 수 있지만 Pavlovian 선택 명령(`TASK 1`)을 지원하지 않습니다. 지원하지 않는 task는 준비 단계에서 오류를 표시하고 시작하지 않습니다.
 
-아래 이미지는 이전 회색 배경 설정의 자극 무늬 예시입니다. 현재 기본 배경은 검정입니다. 현재 실행 시 위치는 화면 정중앙입니다. 실제 픽셀 크기는 `diameter_px` 설정으로 바뀝니다.
-
-![이전 회색 배경의 Gabor 자극 예시](docs/gabor_preview.png)
+![동일한 줄무늬와 서로 다른 두 도형 윤곽](docs/shape_preview.png)
 
 ## 기존 배선
 
@@ -87,7 +87,7 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-**장치 연결 전 화면 시험:** 다음 명령은 Arduino 없이 가상 세션을 3회만 실행합니다. 검정 창과 자극이 보이는지, 기록 파일이 만들어지는지 확인하는 용도입니다. 실제 밸브는 움직이지 않습니다. `--windowed`는 작은 창으로 표시하고, `--autostart`는 Space 입력 없이 시작하며, `--exit-when-done`은 완료 후 창을 닫습니다.
+**장치 연결 전 화면 시험:** 다음 명령은 Arduino 없이 가상 세션을 CS+·CS− 2회씩 총 4회만 실행합니다. 검정 창과 자극이 보이는지, 기록 파일이 만들어지는지 확인하는 용도입니다. 실제 밸브는 움직이지 않습니다. `--windowed`는 작은 창으로 표시하고, `--autostart`는 Space 입력 없이 시작하며, `--exit-when-done`은 완료 후 창을 닫습니다.
 
 ```bash
 python HEADFIXED_PYTHON.py --simulate --demo --windowed --autostart --exit-when-done
@@ -127,6 +127,24 @@ python HEADFIXED_PYTHON.py --config config/experiment.json --port /dev/ttyACM0 -
 
 | `stimulus` 설정 | 기본값 | 의미 |
 |---|---:|---|
+| `type` | `square_grating` | 정사각형·마름모 윤곽 안에 같은 줄무늬 |
+| `visual_angle_deg` | 20 | 공통 대각선의 시야각 |
+| `viewing_distance_cm` | 15 | 눈에서 화면 중심까지 거리 |
+| `screen_width_cm` | 약 15.2462 | 실제 화면 가로 길이; 기본은 7인치 800×480 가정 |
+| `screen_width_px` | 800 | 화면 가로 해상도 |
+| `mean_gray` | 128 | 도형 내부 줄무늬의 평균 gray |
+| `contrast` | 0.5 | 줄무늬 대비 |
+| `spatial_frequency_cpd` | 0.05 | cycle/degree |
+| `temporal_frequency_hz` | 1.5 | 아래로 흐르는 줄무늬의 시간주파수 |
+| `animation_rate_hz` | 60 | 렌더링 목표 빈도 |
+
+배경 `display.background_gray`는 0입니다. 대각선은 약 5.29cm(277.57px), 한 변은 약 3.74cm(196.27px)이며 두 도형은 같은 면적입니다. 자세한 보정과 논문 조건은 [도형 안내](docs/shape_discrimination.md)를 참고하세요.
+
+<details>
+<summary>이전 Gabor 설정: --config config/gabor.json</summary>
+
+| `stimulus` 설정 | 기본값 | 의미 |
+|---|---:|---|
 | `diameter_px` | 276 | 원형 패치 지름, 화면 픽셀 단위 |
 | `cycles_per_patch` | 6 | 패치 지름 안의 흑백 줄무늬 주기 수 (아래 화면 가정에서 약 0.4 cycle/degree) |
 | `orientation_deg` | 45 | 0도는 세로 줄무늬 |
@@ -138,14 +156,17 @@ python HEADFIXED_PYTHON.py --config config/experiment.json --port /dev/ttyACM0 -
 
 현재 공간주파수는 `cycles_per_patch / diameter_px`인 cycles/pixel로 결정합니다. 신경과학에서 쓰는 cycles/degree로 맞추려면 실제 화면의 가로 길이, 해상도, 쥐 눈과 화면 사이의 거리가 필요합니다. 7인치라는 정보만으로 시각도 단위를 정하지 않습니다.
 
-현재 지름 276px은 7인치 대각선·800×480 해상도·정사각형 픽셀을 가정한 근삿값입니다. 눈이 패치 중심을 정면으로 바라보고 중심까지 거리가 20cm라면, 지름 시야각 15°에 필요한 물리적 크기는 `2 × 20 × tan(7.5°) ≈ 5.27cm`입니다. 위 가정에서 화면 가로는 약 15.25cm이고, 필요한 지름 약 276.32px을 정수 276px로 반올림했습니다. 실제 표시 영역 치수나 픽셀 종횡비가 다르면 다시 보정해야 합니다. 15°는 원형 패치 경계의 지름 기준이며 Gaussian으로 희미해지는 무늬의 가시 범위와는 다릅니다. 화면 정중앙에 배치하며, 800×480 화면에서 중심은 (400, 240)입니다.
+이전 Gabor 지름 276px은 7인치 대각선·800×480 해상도·정사각형 픽셀을 가정한 근삿값입니다. 눈이 패치 중심을 정면으로 바라보고 중심까지 거리가 20cm라면, 지름 시야각 15°에 필요한 물리적 크기는 `2 × 20 × tan(7.5°) ≈ 5.27cm`입니다. 위 가정에서 화면 가로는 약 15.25cm이고, 필요한 지름 약 276.32px을 정수 276px로 반올림했습니다. 실제 표시 영역 치수나 픽셀 종횡비가 다르면 다시 보정해야 합니다. 15°는 원형 패치 경계의 지름 기준이며 Gaussian으로 희미해지는 무늬의 가시 범위와는 다릅니다. 화면 정중앙에 배치하며, 800×480 화면에서 중심은 (400, 240)입니다.
 
 이 화면 가정과 거리 20cm에서 `cycles_per_patch = 6`은 약 15° 지름에 여섯 주기, 즉 평균 약 0.4 cycle/degree에 해당합니다. `sigma_fraction = 0.29578217`을 유지하므로 지름 276px에서 `sigma ≈ 81.64px`입니다. Gaussian의 `FWHM = 2 × sqrt(2 × ln(2)) × sigma`에 따라 반치전폭은 약 192.24px, 시야각 약 10.5°입니다. FWHM은 줄무늬 자체의 밝기 폭이 아닌 Gaussian 대비 포락선의 반치전폭입니다. 바깥쪽 경계의 taper는 반치점 밖에서 적용됩니다. 물리적 화면 치수나 거리를 바꾸면 다시 보정해야 합니다.
 
 `display.background_gray`의 기본값은 0(검정)이며 범위는 0–255입니다. 검정 배경에서는 `contrast × 127.5 × Gaussian/taper × (1 + cos)`로 밝은 줄무늬를 그립니다. 가장자리와 패치 밖은 검정이며, 자극 중 평균 밝기가 증가합니다. `contrast=0`이면 완전한 검정입니다. 회색 배경 설정은 기존 대칭 명암 변조를 사용합니다. 전체 화면 모드에서는 실제 화면 크기를 사용합니다. `window_width`, `window_height`는 창 모드에서의 크기이며, 패치는 화면에 들어가는 크기로 설정해야 합니다.
 
+</details>
+
 | `session` 설정 | 기본값 | 의미 |
 |---|---:|---|
+| `cue_protocol` | `square_discrimination` | CS+·CS−를 동일한 수로 섞는 도형 변별 |
 | `task` | `operant` | `pavlovian` 또는 `operant`. `--task` 지정 시 실행 옵션 우선 |
 | `trials` | 100 | 시행 횟수 |
 | `cue_delay_ms` | 1000 | 시행 시작에서 자극 시작까지 |

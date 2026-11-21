@@ -13,7 +13,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 from .config import DEFAULT_CONFIG, configuration_command, load_config, photometry_command, validate_config
 from .recording import SessionLog
 from .schedule import generate_schedule, load_schedule
-from .stimulus import make_gabor
+from .stimulus import make_gabor, SquareGrating, square_geometry
 
 
 class TerminalStartInput:
@@ -77,8 +77,14 @@ class Experiment:
             raise ValueError(f"Display {index} not found; available: {len(sizes)}")
         fullscreen = display["fullscreen"] and not windowed
         size = sizes[index] if fullscreen else (display["window_width"], display["window_height"])
-        if config["stimulus"]["diameter_px"] > min(size):
-            raise ValueError(f"Gabor diameter exceeds display {size}; reduce diameter_px")
+        stimulus = config["stimulus"]
+        self.square = stimulus.get("type") == "square_grating"
+        geometry = square_geometry(stimulus) if self.square else None
+        extent = geometry["diagonal_px"] + 3 if self.square else stimulus["diameter_px"]
+        if extent > min(size):
+            raise ValueError(f"Stimulus exceeds display {size}; check stimulus size and calibration")
+        if self.square and fullscreen and pygame.display.get_driver() != "dummy" and size[0] != stimulus["screen_width_px"]:
+            raise ValueError("Fullscreen width differs from stimulus.screen_width_px; calibrate the actual display before using visual angles")
         flags = pygame.FULLSCREEN if fullscreen else 0
         # SCALED requests SDL vsync. Native resolution preserves physical pixel size.
         # The dummy driver used by CI has no hardware renderer or vsync.
@@ -89,8 +95,21 @@ class Experiment:
         pygame.display.set_caption("Visual cue experiment")
         pygame.mouse.set_visible(False)
         self.show_gray()
-        pixels = make_gabor(**config["stimulus"], background_gray=self.gray)
-        self.texture = pygame.surfarray.make_surface(pixels.swapaxes(0, 1)).convert()
+        if self.square:
+            self.grating = SquareGrating(stimulus, self.gray)
+            self.cue_rewarded = 1
+            self.animation_frame = 0
+            pixels = self.grating.frame(1, 0)
+            self.texture = pygame.surfarray.make_surface(pixels.swapaxes(0, 1)).convert()
+            self.recording.metadata["stimulus_geometry"] = dict(geometry,
+                cs_plus_orientation_deg=45, cs_minus_orientation_deg=0,
+                screen_width_cm=stimulus["screen_width_cm"], screen_width_px=stimulus["screen_width_px"],
+                viewing_distance_cm=stimulus["viewing_distance_cm"], visual_angle_deg=stimulus["visual_angle_deg"],
+                drift_direction="down", carrier_orientation="horizontal", phase_reset_each_trial=True,
+                animation_timing="elapsed time; target refresh rate, not measured display frames")
+        else:
+            pixels = make_gabor(**stimulus, background_gray=self.gray)
+            self.texture = pygame.surfarray.make_surface(pixels.swapaxes(0, 1)).convert()
         width, height = self.screen.get_size()
         self.target = self.texture.get_rect(center=(width // 2, height // 2))
         self.recording.metadata["display"] = {"resolution": list(self.screen.get_size()),
@@ -191,11 +210,15 @@ class Experiment:
         task_number = 1 if task == "pavlovian" else 2
         self.recording.metadata["task"] = task
         self.recording.metadata["task_number"] = task_number
+        self.recording.metadata["cue_protocol"] = self.config["session"].get("cue_protocol", "all_rewarded")
         self.recording.metadata["trial_end_rule"] = (
             "reward_at_plus_post_reward" if task == "pavlovian"
             else "post_reward_lick_and_valve_closed")
         self.recording.save_metadata()
         print(f"Task {task_number}: {task.capitalize()} task", flush=True)
+        if self.config["session"].get("cue_protocol") == "square_discrimination":
+            plus = sum(row["Rewarded"] for row in self.rows)
+            print(f"Cues: CS+ diamond 45 degrees, {plus} rewarded; CS- square 0 degrees, {len(self.rows)-plus} unrewarded.", flush=True)
         print("Ready. SPACE on the display=start, ESC=abort, Q=quit. One session per run.", flush=True)
 
     def start(self):
@@ -224,6 +247,14 @@ class Experiment:
         if kind == "CUE_REQUEST":
             if not self.active or self.cue_on_ns is not None:
                 raise RuntimeError("Unexpected cue request")
+            if not 1 <= value <= len(self.rows):
+                raise RuntimeError("Cue trial index is outside the loaded schedule")
+            row = self.rows[value - 1]
+            if self.square:
+                self.cue_rewarded = row["Rewarded"]
+                self.animation_frame = 0
+                pixels = self.grating.frame(self.cue_rewarded, 0)
+                self.pg.surfarray.blit_array(self.texture, pixels.swapaxes(0, 1))
             self.screen.fill((self.gray,) * 3)
             self.screen.blit(self.texture, self.target)
             self.pg.display.flip()
@@ -231,6 +262,10 @@ class Experiment:
             self.cue_trial = value
             self.send(f"CUE_ON {value}")
             self.recording.event("DISPLAY_ON", value, at_ns=self.cue_on_ns)
+            if self.square:
+                cue = "CS+" if row["Rewarded"] else "CS-"
+                self.recording.event("CS_PLUS_ON" if row["Rewarded"] else "CS_MINUS_ON", value, at_ns=self.cue_on_ns)
+                print(f"CUE: trial {value}, {cue}, {'diamond 45 deg' if row['Rewarded'] else 'square 0 deg'}", flush=True)
         elif kind in ("SESSION_END", "SESSION_ABORTED"):
             self.show_gray()
             self.cue_on_ns = None
@@ -248,14 +283,23 @@ class Experiment:
             print(f"SESSION_START: {value}. Session started; initial marker and ITI precede the first trial.", flush=True)
         elif kind == "ITI_DURATION_S":
             print(f"ITI_DURATION_S: {value}s", flush=True)
-        elif kind in ("TRIAL_START", "TRIAL_END", "REWARD_ON", "LICK", "WAIT_LICK", "ITI_START"):
+        elif kind in ("TRIAL_START", "TRIAL_END", "REWARD_ON", "NO_REWARD", "LICK", "WAIT_LICK", "ITI_START"):
             print(f"{kind}: {value}", flush=True)
 
     def update_cue(self):
         if self.cue_on_ns is None:
             return
         duration_ms = self.config["session"]["cue_duration_ms"]
-        if time.monotonic_ns() - self.cue_on_ns < duration_ms * 1_000_000:
+        elapsed_s = (time.monotonic_ns() - self.cue_on_ns) / 1_000_000_000
+        if elapsed_s * 1000 < duration_ms:
+            if self.square:
+                frame = int(elapsed_s * self.config["stimulus"]["animation_rate_hz"])
+                if frame != self.animation_frame:
+                    pixels = self.grating.frame(self.cue_rewarded, elapsed_s)
+                    self.pg.surfarray.blit_array(self.texture, pixels.swapaxes(0, 1))
+                    self.screen.blit(self.texture, self.target)
+                    self.pg.display.flip()
+                    self.animation_frame = frame
             return
         off_ns = self.show_gray()
         elapsed_ms = (off_ns - self.cue_on_ns) / 1_000_000
@@ -312,7 +356,7 @@ def main(argv=None):
     parser.add_argument("--task", choices=("1", "2", "pavlovian", "operant"),
                         help="1/pavlovian: timed trial end; 2/operant: wait for post-reward lick. Overrides session.task.")
     parser.add_argument("--simulate", action="store_true", help="Use simulated Arduino; no hardware commands")
-    parser.add_argument("--demo", action="store_true", help="Simulation only: 3 trials, initial delay 0, ITI 1 s")
+    parser.add_argument("--demo", action="store_true", help="Simulation only: 4 balanced shape trials (3 for legacy Gabor), initial delay 0, ITI 1 s")
     parser.add_argument("--autostart", action="store_true", help="Start immediately instead of waiting for terminal start + Enter or display SPACE")
     parser.add_argument("--exit-when-done", action="store_true")
     parser.add_argument("--windowed", action="store_true")
@@ -330,7 +374,8 @@ def main(argv=None):
         config["session"]["task"] = ({"1": "pavlovian", "2": "operant"}.get(args.task, args.task)
                                      if args.task else config["session"].get("task", "operant"))
         if args.demo:
-            config["session"].update(trials=3, initial_iti_s=0, iti_min_s=1, iti_max_s=1)
+            count = 4 if config["session"].get("cue_protocol") == "square_discrimination" else 3
+            config["session"].update(trials=count, initial_iti_s=0, iti_min_s=1, iti_max_s=1)
         validate_config(config)
         if args.schedule:
             rows, seed = load_schedule(args.schedule, config["session"]), None

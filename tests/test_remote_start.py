@@ -23,7 +23,7 @@ class RemoteStartTests(unittest.TestCase):
         terminal = os.fdopen(slave, "r")
         self.addCleanup(terminal.close)
         with tempfile.TemporaryDirectory() as directory:
-            config = load_config()
+            config = load_config(Path(__file__).resolve().parents[1] / "config" / "gabor.json")
             config["session"].update(trials=1, cue_delay_ms=20, cue_duration_ms=20,
                                      reward_at_ms=100, post_reward_ms=100, valve_open_ms=10,
                                      initial_iti_s=0, iti_min_s=0, iti_max_s=0)
@@ -97,7 +97,7 @@ class RemoteStartTests(unittest.TestCase):
         for selection, task in (("1", "pavlovian"), ("pavlovian", "pavlovian"),
                                 ("2", "operant"), ("operant", "operant")):
             with self.subTest(selection=selection), tempfile.TemporaryDirectory() as directory:
-                config = load_config()
+                config = load_config(Path(__file__).resolve().parents[1] / "config" / "gabor.json")
                 config["session"].update(task="operant" if task == "pavlovian" else "pavlovian",
                                          trials=1, cue_delay_ms=20, cue_duration_ms=20,
                                          reward_at_ms=100, post_reward_ms=100, valve_open_ms=10,

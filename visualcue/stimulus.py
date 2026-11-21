@@ -1,4 +1,4 @@
-"""Generate a circular Gabor patch without requiring a display or Pygame.
+"""Generate Gabor patches and shape-masked drifting gratings without Pygame.
 
 ``cycles_per_patch`` measures carrier cycles across the patch's diameter, so
 spatial frequency in cycles/pixel is ``cycles_per_patch / diameter_px``. It is
@@ -11,6 +11,55 @@ screen y (downwards). A static patch is produced for the supplied phase.
 from numbers import Integral, Real
 
 import numpy as np
+
+
+def square_geometry(stimulus):
+    """20 degrees denotes the common diagonal, not the upright square's side."""
+    diagonal_cm = 2 * stimulus["viewing_distance_cm"] * np.tan(np.deg2rad(stimulus["visual_angle_deg"]) / 2)
+    diagonal_px = diagonal_cm * stimulus["screen_width_px"] / stimulus["screen_width_cm"]
+    return {"angle_reference": "diagonal", "diagonal_cm": float(diagonal_cm),
+            "side_cm": float(diagonal_cm / np.sqrt(2)), "diagonal_px": float(diagonal_px),
+            "side_px": float(diagonal_px / np.sqrt(2))}
+
+
+def _square_coverage(side_px, orientation_deg):
+    """Equal-area apertures, supersampled edges, and a shared centered canvas."""
+    size = int(np.ceil(side_px * np.sqrt(2))) + 2
+    samples = 4
+    coords = (np.arange(size * samples) + .5) / samples - size / 2
+    x, y = coords[np.newaxis, :], coords[:, np.newaxis]
+    angle = np.deg2rad(orientation_deg)
+    u, v = x * np.cos(angle) + y * np.sin(angle), -x * np.sin(angle) + y * np.cos(angle)
+    mask = (np.abs(u) <= side_px / 2) & (np.abs(v) <= side_px / 2)
+    return mask.reshape(size, samples, size, samples).mean(axis=(1, 3))
+
+
+class SquareGrating:
+    """Identical downward-drifting carrier under 0/45-degree square apertures.
+
+    Only the aperture rotates. Phase uses elapsed seconds, so slow frames do
+    not slow the drift. Screen calibration assumes a centered, frontal eye.
+    """
+
+    def __init__(self, stimulus, background_gray):
+        self.settings = stimulus
+        self.background = background_gray
+        side = square_geometry(stimulus)["side_px"]
+        self.coverage = {reward: _square_coverage(side, angle) for reward, angle in ((1, 45), (0, 0))}
+        size = self.coverage[1].shape[0]
+        cm_per_pixel = stimulus["screen_width_cm"] / stimulus["screen_width_px"]
+        y_cm = (np.arange(size) + .5 - size / 2) * cm_per_pixel
+        self.y_degrees = np.rad2deg(np.arctan(y_cm / stimulus["viewing_distance_cm"]))
+
+    def frame(self, rewarded, elapsed_s):
+        s = self.settings
+        # cos(k*y - omega*t): a bright peak moves toward increasing screen y.
+        phase = 2 * np.pi * (s["spatial_frequency_cpd"] * self.y_degrees - s["temporal_frequency_hz"] * elapsed_s)
+        amplitude = s["contrast"] * min(s["mean_gray"], 255 - s["mean_gray"])
+        carrier = s["mean_gray"] + amplitude * np.cos(phase)
+        pixels = self.background + self.coverage[rewarded] * (carrier[:, None] - self.background)
+        gray = np.rint(pixels).clip(0, 255).astype(np.uint8)
+        return np.repeat(gray[:, :, None], 3, axis=2)
 
 
 def _finite_real(name: str, value: float) -> float:

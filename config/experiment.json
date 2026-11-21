@@ -1,5 +1,8 @@
 {
-  "serial": {"port": "/dev/ttyACM0", "baud": 115200},
+  "serial": {
+    "port": "/dev/ttyACM0",
+    "baud": 115200
+  },
   "session": {
     "task": "operant",
     "trials": 100,
@@ -13,7 +16,8 @@
     "iti_max_s": 20,
     "iti_distribution": "exponential",
     "iti_exponential_scale_s": 3.0,
-    "seed": null
+    "seed": null,
+    "cue_protocol": "square_discrimination"
   },
   "photometry": {
     "enabled": true,
@@ -30,11 +34,15 @@
     "max_cue_overrun_ms": 100
   },
   "stimulus": {
-    "diameter_px": 276,
-    "cycles_per_patch": 6,
-    "orientation_deg": 45,
-    "contrast": 1.0,
-    "sigma_fraction": 0.29578217,
-    "phase_deg": 0
+    "type": "square_grating",
+    "visual_angle_deg": 20,
+    "viewing_distance_cm": 15,
+    "screen_width_cm": 15.246224219169036,
+    "screen_width_px": 800,
+    "mean_gray": 128,
+    "contrast": 0.5,
+    "spatial_frequency_cpd": 0.05,
+    "temporal_frequency_hz": 1.5,
+    "animation_rate_hz": 60
   }
 }
