@@ -41,6 +41,9 @@ def make_gabor(
     Contrast scales the largest symmetric modulation that fits within 0..255
     about ``background_gray``. This leaves the carrier mean at the background
     and prevents clipping, including when a non-midgray background is chosen.
+    On a black background, a nonnegative black-to-white carrier is blended
+    into black with the same envelope; contrast scales its brightness. This
+    adds luminance during the cue instead of using a zero-mean modulation.
     Pixel values describe requested display intensities; physical luminance
     and visual angles require calibration on the actual monitor.
     """
@@ -73,7 +76,7 @@ def make_gabor(
     if not 0 < sigma_fraction <= 0.5:
         raise ValueError("sigma_fraction must be positive and no greater than 0.5")
 
-    if contrast == 0 or background_gray in (0, 255):
+    if contrast == 0 or background_gray == 255:
         return np.full((diameter_px, diameter_px, 3), background_gray, dtype=np.uint8)
 
     # Pixel centers are symmetric about the geometric center for odd and even
@@ -96,6 +99,9 @@ def make_gabor(
     carrier_axis = x * np.cos(theta) + y * np.sin(theta)
     carrier = np.cos(2 * np.pi * (cycles_per_patch / diameter_px) * carrier_axis + phase)
     amplitude = contrast * min(background_gray, 255 - background_gray)
-    gray = np.rint(background_gray + amplitude * envelope * carrier)
+    if background_gray == 0:
+        gray = np.rint(contrast * 127.5 * envelope * (1 + carrier))
+    else:
+        gray = np.rint(background_gray + amplitude * envelope * carrier)
     gray = np.clip(gray, 0, 255).astype(np.uint8)
     return np.repeat(gray[:, :, np.newaxis], 3, axis=2)

@@ -3,6 +3,7 @@
 import argparse
 import copy
 import os
+import select
 import sys
 import time
 from pathlib import Path
@@ -13,6 +14,33 @@ from .config import DEFAULT_CONFIG, configuration_command, load_config, photomet
 from .recording import SessionLog
 from .schedule import generate_schedule, load_schedule
 from .stimulus import make_gabor
+
+
+class TerminalStartInput:
+    """Poll a POSIX/SSH terminal without blocking display or Arduino polling."""
+
+    def __init__(self):
+        self.fd = None
+        self.pending = b""
+        if os.name == "posix" and sys.stdin is not None and sys.stdin.isatty():
+            self.fd = sys.stdin.fileno()
+
+    def poll(self):
+        if self.fd is None or not select.select([self.fd], [], [], 0)[0]:
+            return False
+        chunk = os.read(self.fd, 4096)
+        if not chunk:  # EOF must never start a session.
+            self.fd = None
+            return False
+        self.pending += chunk
+        start = False
+        while b"\n" in self.pending:
+            line, self.pending = self.pending.split(b"\n", 1)
+            if line.strip().lower() == b"start":
+                start = True
+            else:
+                print("To start, type start and press Enter. Ctrl+C quits.", flush=True)
+        return start
 
 
 def parse_event(line):
@@ -138,7 +166,7 @@ class Experiment:
         raise TimeoutError(f"No {expected},{value} acknowledgment for {command!r}")
 
     def prepare(self, simulated=False):
-        # The Uno resets on serial open; keep the display gray during boot.
+        # The Uno resets on serial open; keep the background visible during boot.
         if not simulated:
             deadline = time.monotonic() + 2.2
             while time.monotonic() < deadline:
@@ -168,7 +196,7 @@ class Experiment:
             else "post_reward_lick_and_valve_closed")
         self.recording.save_metadata()
         print(f"Task {task_number}: {task.capitalize()} task", flush=True)
-        print("Ready. SPACE=start, ESC=abort to gray, Q=quit. One session per run.", flush=True)
+        print("Ready. SPACE on the display=start, ESC=abort, Q=quit. One session per run.", flush=True)
 
     def start(self):
         if self.started:
@@ -213,7 +241,7 @@ class Experiment:
                 self.recording.metadata.setdefault("end_reason", "trial_count")
                 self.recording.metadata["completed_trials"] = value
             self.recording.save_metadata()
-            print(f"{kind}: {value}. Gray screen remains until Q.", flush=True)
+            print(f"{kind}: {value}. Background remains until Q.", flush=True)
         elif kind == "READY" and self.started:
             raise RuntimeError("Arduino reset during session")
         elif kind == "SESSION_START":
@@ -240,8 +268,13 @@ class Experiment:
         self.send(f"CUE_OFF {self.cue_trial}")
 
     def run(self, autostart=False, exit_when_done=False):
+        terminal = TerminalStartInput() if not autostart else None
         if autostart:
             self.start()
+        elif terminal.fd is not None:
+            print("Waiting for SSH terminal input: type start and press Enter to begin. Ctrl+C quits.", flush=True)
+        else:
+            print("No interactive SSH terminal detected. Press SPACE on the stimulus display to start.", flush=True)
         timer = self.pg.time.Clock()
         while True:
             for event in self.pg.event.get():
@@ -256,6 +289,8 @@ class Experiment:
                         self.abort("operator pressed ESC")
                 if event.type == self.pg.WINDOWFOCUSLOST and self.active:
                     self.abort("stimulus window lost focus")
+            if not self.started and terminal is not None and terminal.poll():
+                self.start()
             self.ping()
             for _, kind, value in self.read_events():
                 self.handle_event(kind, value)
@@ -278,7 +313,7 @@ def main(argv=None):
                         help="1/pavlovian: timed trial end; 2/operant: wait for post-reward lick. Overrides session.task.")
     parser.add_argument("--simulate", action="store_true", help="Use simulated Arduino; no hardware commands")
     parser.add_argument("--demo", action="store_true", help="Simulation only: 3 trials, initial delay 0, ITI 1 s")
-    parser.add_argument("--autostart", action="store_true", help="Start after setup without SPACE; real hardware delivers rewards")
+    parser.add_argument("--autostart", action="store_true", help="Start immediately instead of waiting for terminal start + Enter or display SPACE")
     parser.add_argument("--exit-when-done", action="store_true")
     parser.add_argument("--windowed", action="store_true")
     args = parser.parse_args(argv)

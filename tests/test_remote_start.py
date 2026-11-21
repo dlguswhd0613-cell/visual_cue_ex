@@ -9,12 +9,90 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from visualcue.runner import main
+from visualcue.runner import main, TerminalStartInput
 from visualcue.config import load_config
 from visualcue.simulated_board import SimulatedBoard
 
 
 class RemoteStartTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "SSH uses a POSIX terminal")
+    def test_terminal_start_waits_while_polling_board_and_starts_once(self):
+        import pty
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        terminal = os.fdopen(slave, "r")
+        self.addCleanup(terminal.close)
+        with tempfile.TemporaryDirectory() as directory:
+            config = load_config()
+            config["session"].update(trials=1, cue_delay_ms=20, cue_duration_ms=20,
+                                     reward_at_ms=100, post_reward_ms=100, valve_open_ms=10,
+                                     initial_iti_s=0, iti_min_s=0, iti_max_s=0)
+            del config["photometry"]
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config))
+            board = SimulatedBoard()
+            write, read = board.write_line, board.read_lines
+            commands = []
+            waiting_reads = 0
+            initial_pings = 0
+
+            def write_command(command):
+                commands.append(command)
+                write(command)
+
+            def read_board():
+                nonlocal waiting_reads, initial_pings
+                if "TRIAL 1 0 1" in commands and "START" not in commands:
+                    waiting_reads += 1
+                    if waiting_reads == 1:
+                        initial_pings = commands.count("PING")
+                    if waiting_reads == 2:
+                        os.write(master, b"\ninvalid\n")
+                    if waiting_reads == 170:
+                        self.assertNotIn("START", commands)
+                        self.assertFalse(board.valve_on or board.trigger_on)
+                        self.assertGreater(commands.count("PING"), initial_pings)
+                        os.write(master, b"start\nstart\n")
+                    if waiting_reads > 250:
+                        raise AssertionError("Terminal start was not consumed")
+                return read()
+
+            output = io.StringIO()
+            with patch.dict(os.environ, {"SDL_VIDEODRIVER": "dummy"}), \
+                    patch("visualcue.runner.sys.stdin", terminal), \
+                    patch("visualcue.simulated_board.SimulatedBoard", return_value=board), \
+                    patch.object(board, "write_line", side_effect=write_command), \
+                    patch.object(board, "read_lines", side_effect=read_board), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                result = main(["--simulate", "--config", str(path), "--exit-when-done",
+                               "--outdir", str(Path(directory) / "data")])
+            self.assertEqual(result, 0, output.getvalue())
+            self.assertEqual(commands.count("START"), 1)
+            self.assertEqual(waiting_reads, 170)
+            self.assertIn("Waiting for SSH terminal input", output.getvalue())
+            self.assertIn("SESSION_END", output.getvalue())
+
+    def test_noninteractive_stdin_cannot_start_session(self):
+        with patch("visualcue.runner.sys.stdin", io.StringIO("start\n")):
+            terminal = TerminalStartInput()
+            self.assertIsNone(terminal.fd)
+            self.assertFalse(terminal.poll())
+
+    @unittest.skipUnless(os.name == "posix", "SSH uses a POSIX terminal")
+    def test_terminal_eof_does_not_start(self):
+        import pty
+        master, slave = pty.openpty()
+        try:
+            with os.fdopen(slave, "r") as stream, patch("visualcue.runner.sys.stdin", stream):
+                terminal = TerminalStartInput()
+                os.write(master, b"\x04")  # Ctrl+D on an empty canonical input line.
+                import select
+                self.assertTrue(select.select([terminal.fd], [], [], 1)[0])
+                self.assertFalse(terminal.poll())
+                self.assertIsNone(terminal.fd)
+        finally:
+            os.close(master)
+
     def test_task_cli_overrides_config_and_records_selected_behavior(self):
         for selection, task in (("1", "pavlovian"), ("pavlovian", "pavlovian"),
                                 ("2", "operant"), ("operant", "operant")):

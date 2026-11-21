@@ -8,7 +8,7 @@
 
 ## 실험 동작
 
-대기·시행 사이·실험 종료 후에는 회색 화면이 유지됩니다. 자극은 화면 정중앙(가로 50%, 세로 50%)에 놓인 원형 Gabor 패치이며, 흑백 줄무늬가 공간상으로 번갈아 배치된 **정지 무늬**입니다. 움직임이나 깜빡임은 없습니다. 가장자리는 Gaussian 형태로 회색 배경에 부드럽게 섞입니다.
+대기·시행 사이·실험 종료 후에는 검정 화면이 유지됩니다. 자극은 화면 정중앙(가로 50%, 세로 50%)에 놓인 원형 Gabor 패치이며, 흑백 줄무늬가 공간상으로 번갈아 배치된 **정지 무늬**입니다. 움직임이나 깜빡임은 없습니다. 가장자리는 Gaussian 형태로 검정 배경에 부드럽게 섞입니다.
 
 기본 세션은 100회이며 모든 시행에서 보상을 제공합니다. **세션 시간 제한은 없으며, 설정된 모든 시행을 완료하면 종료합니다.** 세션 시작 시 기존 코드와 같은 LED/TTL 시작 신호를 보낸 뒤 최초 대기 90초가 시작됩니다. 이후 각 시행의 시간표는 다음과 같습니다.
 
@@ -23,31 +23,31 @@
 
 ```bash
 # 1번: Pavlovian
-DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id B67 --task 1 --autostart --exit-when-done
+DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id B67 --task 1 --exit-when-done
 # 2번: Operant
-DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id B67 --task 2 --autostart --exit-when-done
+DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id B67 --task 2 --exit-when-done
 ```
 
 기존 `--schedule` 옵션도 함께 사용할 수 있습니다. 선택 결과는 터미널에 `Task 1: Pavlovian task` 또는 `Task 2: Operant task`로 표시되며, `metadata.json`의 `task`, `task_number`, `trial_end_rule`에 저장됩니다.
 
 | 시행 시작 기준 | 화면 및 장치 동작 |
 |---|---|
-| 0초 | 시행 시작, 회색 화면 |
+| 0초 | 시행 시작, 검정 화면 |
 | 0.9초 | D7 cue 사전 트리거 20ms |
 | 1초 | 화면 정중앙에 Gabor 자극 표시 |
-| 3초 | 자극 종료, 회색 화면 복귀 |
+| 3초 | 자극 종료, 검정 화면 복귀 |
 | 5.9초 | D7 reward 사전 트리거 20ms |
 | 6초 | 자극 종료 예정 시점에서 3초 후, 보상 밸브 30ms 개방 |
 | 10초 (1번 Pavlovian) | 보상 6초 + 관찰 4초 후 lick과 관계없이 시행 종료 |
 | 보상 후 첫 lick (2번 Operant) | 밸브가 닫혔다면 즉시 시행 종료; 개방 중 lick이면 30ms 개방 완료 후 종료 |
-| 시행 종료 직후 | 회색 화면에서 ITI 10–20초 시작 (감소하는 지수분포) |
+| 시행 종료 직후 | 검정 화면에서 ITI 10–20초 시작 (감소하는 지수분포) |
 | ITI 경과 후 | 다음 시행 시작 |
 
 ITI는 **trial이 끝난 시점부터 다음 trial 시작까지**의 시간입니다. 기본값은 10–20초의 정수 초를 감소하는 지수분포로 선택합니다. Pavlovian은 현재 설정에서 trial 시작 10초 뒤 종료하므로 ITI가 12초라면 다음 trial은 22초에 시작합니다. Operant에서 trial 시작 7초에 보상 후 첫 lick이 감지되면 다음 trial은 19초에 시작합니다. 마지막 trial 이후에는 ITI 없이 세션이 끝납니다. 보상 밸브의 30ms는 보상 부피가 아니므로 실제 장치에서 양을 측정해야 합니다.
 
 Lick은 D11의 LOW→HIGH 전환으로 감지하고, 직전 감지 이후 50ms 미만의 신호는 제외합니다. 감지할 때마다 터미널에 `LICK: 1`, `LICK: 2`처럼 누적 횟수를 즉시 표시하고, `events.csv`에도 시각과 누적 횟수를 저장합니다. 시행 중과 ITI를 포함해 세션 전체에서 기록합니다. **Operant에서는 보상 시작 전 lick을 종료 조건에 포함하지 않으며, 보상 시작 후 첫 유효 lick부터 인정합니다.** 센서가 보상 전부터 계속 HIGH인 경우 새 LOW→HIGH 전환이 필요합니다. 밸브가 열려 있는 동안 감지한 lick도 인정하되 설정된 밸브 개방 시간을 끝까지 유지한 뒤 시행을 종료합니다.
 
-**Operant에서 보상 후 lick이 없으면 밸브를 닫고 회색 화면에서 계속 기다립니다.** 자동으로 다음 ITI로 넘어가거나 보상을 다시 주지 않습니다. 터미널의 `WAIT_LICK`은 이 대기 상태이고, lick을 감지하면 `LICK` → `TRIAL_END` → `ITI_START` 순서로 기록됩니다(밸브 개방 중 lick은 밸브 종료 뒤 `TRIAL_END`). STOP·Esc·Ctrl+C 또는 통신 끊김 시에는 중단할 수 있습니다. 비보상 시행(`Rewarded=0`)은 lick을 기다리지 않고 `reward_at_ms + post_reward_ms`에 종료합니다.
+**Operant에서 보상 후 lick이 없으면 밸브를 닫고 검정 화면에서 계속 기다립니다.** 자동으로 다음 ITI로 넘어가거나 보상을 다시 주지 않습니다. 터미널의 `WAIT_LICK`은 이 대기 상태이고, lick을 감지하면 `LICK` → `TRIAL_END` → `ITI_START` 순서로 기록됩니다(밸브 개방 중 lick은 밸브 종료 뒤 `TRIAL_END`). STOP·Esc·Ctrl+C 또는 통신 끊김 시에는 중단할 수 있습니다. 비보상 시행(`Rewarded=0`)은 lick을 기다리지 않고 `reward_at_ms + post_reward_ms`에 종료합니다.
 
 ITI 시작 시 터미널에는 `ITI_START: 2`(다음 시행 번호), `ITI_DURATION_S: 12s`(해당 ITI 길이)처럼 표시됩니다.
 
@@ -55,9 +55,9 @@ ITI 시작 시 터미널에는 `ITI_START: 2`(다음 시행 번호), `ITI_DURATI
 
 **Pavlovian을 선택하려면 Pi의 Python을 업데이트하고 최신 Uno 스케치를 한 번 업로드해야 합니다.** 이후에는 같은 스케치에서 `--task`로 두 모드를 선택합니다. 기존 lick 종료 스케치(`771cc24`)는 Operant를 계속 실행할 수 있지만 Pavlovian 선택 명령(`TASK 1`)을 지원하지 않습니다. 지원하지 않는 task는 준비 단계에서 오류를 표시하고 시작하지 않습니다.
 
-자극 무늬의 예시입니다. 현재 실행 시 위치는 화면 정중앙입니다. 실제 픽셀 크기는 `diameter_px` 설정으로 바뀝니다.
+아래 이미지는 이전 회색 배경 설정의 자극 무늬 예시입니다. 현재 기본 배경은 검정입니다. 현재 실행 시 위치는 화면 정중앙입니다. 실제 픽셀 크기는 `diameter_px` 설정으로 바뀝니다.
 
-![기본 Gabor 자극: 회색 배경 중앙의 원형 흑백 줄무늬](docs/gabor_preview.png)
+![이전 회색 배경의 Gabor 자극 예시](docs/gabor_preview.png)
 
 ## 기존 배선
 
@@ -87,13 +87,13 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-**장치 연결 전 화면 시험:** 다음 명령은 Arduino 없이 가상 세션을 3회만 실행합니다. 회색 창과 자극이 보이는지, 기록 파일이 만들어지는지 확인하는 용도입니다. 실제 밸브는 움직이지 않습니다. `--windowed`는 작은 창으로 표시하고, `--autostart`는 Space 입력 없이 시작하며, `--exit-when-done`은 완료 후 창을 닫습니다.
+**장치 연결 전 화면 시험:** 다음 명령은 Arduino 없이 가상 세션을 3회만 실행합니다. 검정 창과 자극이 보이는지, 기록 파일이 만들어지는지 확인하는 용도입니다. 실제 밸브는 움직이지 않습니다. `--windowed`는 작은 창으로 표시하고, `--autostart`는 Space 입력 없이 시작하며, `--exit-when-done`은 완료 후 창을 닫습니다.
 
 ```bash
 python HEADFIXED_PYTHON.py --simulate --demo --windowed --autostart --exit-when-done
 ```
 
-**실제 실험:** 코드를 Raspberry Pi에 복사하고 새 스케치를 Uno에 업로드한 뒤, Pi에서 아래 한 줄을 실행합니다. `/dev/ttyACM0`은 Pi에 USB로 연결된 Uno의 포트이고 `mouse01`은 기록 파일에 붙일 개체 이름입니다. 회색 화면이 열리면 Space를 눌러 100회 세션을 시작합니다. 시행표는 프로그램이 자동으로 만들고 해당 세션의 기록 폴더에 저장합니다.
+**실제 실험:** 코드를 Raspberry Pi에 복사하고 새 스케치를 Uno에 업로드한 뒤, Pi에서 아래 한 줄을 실행합니다. `/dev/ttyACM0`은 Pi에 USB로 연결된 Uno의 포트이고 `mouse01`은 기록 파일에 붙일 개체 이름입니다. 검정 화면과 준비 메시지가 나오면 SSH 터미널에 `start`를 입력하고 Enter를 눌러 100회 세션을 시작합니다. 화면에 연결된 키보드의 Space도 사용할 수 있습니다. 시행표는 프로그램이 자동으로 만들고 해당 세션의 기록 폴더에 저장합니다.
 
 ```bash
 python HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id mouse01
@@ -110,11 +110,12 @@ python HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id mouse01 --schedule sch
 
 | 키 | 동작 |
 |---|---|
+| SSH 터미널 `start` + Enter | 준비된 세션 시작 (`--autostart` 생략) |
 | Space | 준비된 세션 시작 |
-| Esc | 실험 중단, 밸브 닫기 및 회색 화면 복귀 |
+| Esc | 실험 중단, 밸브 닫기 및 검정 화면 복귀 |
 | Q | 프로그램 종료 |
 
-동물에게 보이는 화면에는 상태 글씨나 버튼을 표시하지 않습니다. 준비 상태·시행 진행·오류는 실행한 터미널에서 확인합니다. 정상 종료 뒤에도 회색 화면이 유지되며 Q로 닫습니다. 다음 세션은 프로그램을 다시 실행해 시작합니다.
+동물에게 보이는 화면에는 상태 글씨나 버튼을 표시하지 않습니다. 준비 상태·시행 진행·오류는 실행한 터미널에서 확인합니다. 정상 종료 뒤에도 검정 화면이 유지되며 Q로 닫습니다. 다음 세션은 프로그램을 다시 실행해 시작합니다.
 
 ## 자극과 실험 조건 바꾸기
 
@@ -141,7 +142,7 @@ python HEADFIXED_PYTHON.py --config config/experiment.json --port /dev/ttyACM0 -
 
 이 화면 가정과 거리 20cm에서 `cycles_per_patch = 6`은 약 15° 지름에 여섯 주기, 즉 평균 약 0.4 cycle/degree에 해당합니다. `sigma_fraction = 0.29578217`을 유지하므로 지름 276px에서 `sigma ≈ 81.64px`입니다. Gaussian의 `FWHM = 2 × sqrt(2 × ln(2)) × sigma`에 따라 반치전폭은 약 192.24px, 시야각 약 10.5°입니다. FWHM은 줄무늬 자체의 밝기 폭이 아닌 Gaussian 대비 포락선의 반치전폭입니다. 바깥쪽 경계의 taper는 반치점 밖에서 적용됩니다. 물리적 화면 치수나 거리를 바꾸면 다시 보정해야 합니다.
 
-`display.background_gray`의 기본값은 128이며 범위는 0–255입니다. 전체 화면 모드에서는 실제 화면 크기를 사용합니다. `window_width`, `window_height`는 창 모드에서의 크기이며, 패치는 화면에 들어가는 크기로 설정해야 합니다.
+`display.background_gray`의 기본값은 0(검정)이며 범위는 0–255입니다. 검정 배경에서는 `contrast × 127.5 × Gaussian/taper × (1 + cos)`로 밝은 줄무늬를 그립니다. 가장자리와 패치 밖은 검정이며, 자극 중 평균 밝기가 증가합니다. `contrast=0`이면 완전한 검정입니다. 회색 배경 설정은 기존 대칭 명암 변조를 사용합니다. 전체 화면 모드에서는 실제 화면 크기를 사용합니다. `window_width`, `window_height`는 창 모드에서의 크기이며, 패치는 화면에 들어가는 크기로 설정해야 합니다.
 
 | `session` 설정 | 기본값 | 의미 |
 |---|---:|---|
@@ -182,7 +183,7 @@ D9의 cue TTL은 화면 갱신 뒤 Pi가 보낸 확인 메시지를 Uno가 수�
 
 실제 센서의 극성, 밸브 구동 및 화면의 밝기·지연은 실제 장치에서 확인해야 합니다. 처음에는 동물 없이 화면, lick 입력, 밸브 작동을 확인하세요. 수동 물 공급 점검은 별도 프로그램 `prime_valve.py`로 수행합니다. **최신 Uno 스케치를 다시 업로드한 뒤** [밸브 점검 안내](docs/valve_test.md)에 따라 계속 열기 또는 반복 여닫기를 선택하세요.
 
-Pi에 키보드가 없다면 `--autostart`로 실제 실험도 Space 없이 시작할 수 있습니다. 실제 보상이 제공되며, SSH 터미널의 Ctrl+C로 중단합니다. Pi 화면 지정과 실행 명령은 [SSH 실행 안내](docs/raspberry_pi.md#pi-키보드-없이-ssh에서-시작)를 참고하세요.
+Pi에 키보드가 없어도 SSH 터미널에 `start`를 입력하고 Enter를 눌러 시작할 수 있습니다. 자동 시작을 원할 때만 `--autostart`를 추가합니다. SSH 터미널의 Ctrl+C로 중단합니다. Pi 화면 지정과 실행 명령은 [SSH 실행 안내](docs/raspberry_pi.md#pi-키보드-없이-ssh에서-시작)를 참고하세요.
 
 ## 검증 명령과 한계
 

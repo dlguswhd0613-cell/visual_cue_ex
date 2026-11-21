@@ -24,8 +24,20 @@ class GaborTests(unittest.TestCase):
         for background in (0, 47, 128, 255):
             with self.subTest(background=background):
                 self.assertTrue(np.all(make_gabor(64, 3, contrast=0, background_gray=background) == background))
-        for background in (0, 255):
+        for background in (255,):
             self.assertTrue(np.all(make_gabor(64, 3, background_gray=background) == background))
+
+    def test_black_background_keeps_visible_stripes_and_fades_to_black(self):
+        image = make_gabor(161, 161 / 16, background_gray=0)
+        self.assertGreater(int(image[80, 80, 0]), 250)
+        self.assertEqual(int(image[80, 88, 0]), 0)
+        self.assertGreater(int(image[80, 96, 0]), 200)
+        coords = np.arange(161) - 80
+        outside = np.hypot(coords[:, None], coords[None, :]) >= 80.5
+        self.assertTrue(np.all(image[outside] == 0))
+        self.assertLessEqual(int(image[80, 0, 0]), 2)
+        rotated = make_gabor(161, 161 / 16, background_gray=0, orientation_deg=90)
+        np.testing.assert_allclose(rotated, image.transpose(1, 0, 2), atol=1)
 
     def test_frequency_has_expected_period_and_orientation(self):
         # A 160px patch with 10 cycles has 16px periods. The envelope changes

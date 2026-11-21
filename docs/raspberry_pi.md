@@ -41,9 +41,9 @@ Pi의 7인치 화면에 열린 데스크톱 터미널에서 실행합니다. SSH
 python HEADFIXED_PYTHON.py --simulate --demo --windowed --autostart --exit-when-done
 ```
 
-회색 창 왼쪽 절반의 중심(가로 25%, 세로 50%)에 정지된 줄무늬가 나타났다가 사라지는지 확인합니다. 이 실행은 Arduino 없이 가상의 lick과 보상 이벤트를 만들며, 실제 밸브를 제어하지 않습니다. `--demo`는 짧은 확인용 조건을 사용합니다. 창 모드 확인 뒤 `--windowed`를 빼면 전체 화면으로 표시합니다.
+검정 창 정중앙(가로 50%, 세로 50%)에 정지된 줄무늬가 나타났다가 사라지는지 확인합니다. 이 실행은 Arduino 없이 가상의 lick과 보상 이벤트를 만들며, 실제 밸브를 제어하지 않습니다. `--demo`는 짧은 확인용 조건을 사용합니다. 창 모드 확인 뒤 `--windowed`를 빼면 전체 화면으로 표시합니다.
 
-실험 화면에는 진행 글씨가 나오지 않습니다. 출력은 터미널에서 확인하세요. `--exit-when-done`을 빼면 세션이 끝나도 회색 화면이 유지됩니다.
+실험 화면에는 진행 글씨가 나오지 않습니다. 출력은 터미널에서 확인하세요. `--exit-when-done`을 빼면 세션이 끝나도 검정 화면이 유지됩니다.
 
 ## 4. Arduino Uno 스케치 업로드
 
@@ -99,9 +99,9 @@ source .venv/bin/activate
 python HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id mouse01
 ```
 
-실제 세션에서는 `--simulate`, `--demo`를 사용하지 않습니다. 준비된 회색 화면에서 **Space**를 눌러 시작합니다. **Esc**는 세션을 중단하고 회색 화면으로 돌립니다. **Q**는 프로그램을 종료합니다. 세션이 끝난 뒤에도 회색 화면은 유지됩니다. 다음 개체는 프로그램을 다시 실행하고 `--mouse-id`를 바꾸세요.
+실제 세션에서는 `--simulate`, `--demo`를 사용하지 않습니다. 준비된 검정 화면에서 SSH 터미널에 **start**를 입력하고 **Enter**를 눌러 시작합니다. 화면에 연결된 키보드의 **Space**도 사용할 수 있습니다. **Esc**는 세션을 중단하고 검정 화면으로 돌립니다. **Q**는 프로그램을 종료합니다. 세션이 끝난 뒤에도 검정 화면은 유지됩니다. 다음 개체는 프로그램을 다시 실행하고 `--mouse-id`를 바꾸세요.
 
-2번 Operant의 기본 시간표는 시행 시작 → 1초에 자극 표시 → 3초에 자극 제거 → 6초에 보상 → 보상 후 첫 lick 및 밸브 닫힘 확인 시 시행 종료 → 10–20초 ITI입니다. 보상 전 lick은 종료 조건에 포함하지 않습니다. 밸브 개방 중 lick은 인정하되 30ms 개방을 완료한 뒤 종료합니다. Lick이 없으면 밸브를 닫고 회색 화면에서 계속 기다리며, 터미널에 `WAIT_LICK`이 표시됩니다. 다음 시행은 실제 시행 종료부터 ITI를 센 뒤 시작합니다. 마지막 시행도 lick을 기다린 뒤 세션을 종료합니다. 최초 대기는 별도로 90초입니다.
+2번 Operant의 기본 시간표는 시행 시작 → 1초에 자극 표시 → 3초에 자극 제거 → 6초에 보상 → 보상 후 첫 lick 및 밸브 닫힘 확인 시 시행 종료 → 10–20초 ITI입니다. 보상 전 lick은 종료 조건에 포함하지 않습니다. 밸브 개방 중 lick은 인정하되 30ms 개방을 완료한 뒤 종료합니다. Lick이 없으면 밸브를 닫고 검정 화면에서 계속 기다리며, 터미널에 `WAIT_LICK`이 표시됩니다. 다음 시행은 실제 시행 종료부터 ITI를 센 뒤 시작합니다. 마지막 시행도 lick을 기다린 뒤 세션을 종료합니다. 최초 대기는 별도로 90초입니다.
 
 1번 Pavlovian은 `--task 1`로 선택합니다. lick과 관계없이 `reward_at_ms + post_reward_ms`에 trial이 끝나고 ITI가 시작됩니다. 현재 설정에서는 보상 6초 + 보상 후 관찰 4초 = trial 시작 후 10초입니다. 2번 Operant는 `--task 2`로 선택하며 위의 lick 종료 동작을 사용합니다. `--task pavlovian`, `--task operant`도 사용할 수 있습니다. 옵션을 생략하면 `session.task` 설정을 사용하며 기본은 `operant`입니다. 두 모드 모두 보상은 예정 시각에 제공되고, Operant의 lick은 trial 종료 조건입니다.
 
@@ -113,13 +113,13 @@ Pi의 그래픽 데스크톱에 로그인되어 있어야 합니다. 일반적�
 
 ```bash
 cd ~/visual_cue_ex
-DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id B67 --task 1 --autostart --exit-when-done
+DISPLAY=:0 python3 HEADFIXED_PYTHON.py --port /dev/ttyACM0 --mouse-id B67 --task 1 --exit-when-done
 # Operant는 --task 1 대신 --task 2를 사용합니다.
 ```
 
-가상환경으로 설치했다면 실행 전에 `source .venv/bin/activate`를 사용하세요. 터미널에 `START sent` 뒤 `SESSION_START`가 나오면 Uno가 세션 시작을 확인한 것입니다. 기본 설정은 시작 표시 3초와 초기 ITI 90초를 거치므로 첫 자극은 시작 약 94초 후 표시됩니다. 창은 시작 전부터 회색이어야 합니다. 이어서 `TRIAL_START`, `REWARD_ON`, 필요 시 `WAIT_LICK`, 그리고 `LICK`, `TRIAL_END`, `ITI_START`, `ITI_DURATION_S`가 출력됩니다. ITI의 시행 번호는 다음 시행이며, `ITI_DURATION_S`에는 대기 시간이 초 단위로 표시됩니다.
+가상환경으로 설치했다면 실행 전에 `source .venv/bin/activate`를 사용하세요. 위 명령에는 `--autostart`가 없으므로 준비 완료 후 기다립니다. `Waiting for SSH terminal input`이 나오면 `start`를 입력하고 Enter를 누르세요. 대기 중에도 화면 갱신과 Arduino 통신 확인은 계속됩니다. 터미널에 `START sent` 뒤 `SESSION_START`가 나오면 Uno가 세션 시작을 확인한 것입니다. 기본 설정은 시작 표시 3초와 초기 ITI 90초를 거치므로 첫 자극은 시작 약 94초 후 표시됩니다. 창은 시작 전부터 검정이어야 합니다. 이어서 `TRIAL_START`, `REWARD_ON`, 필요 시 `WAIT_LICK`, 그리고 `LICK`, `TRIAL_END`, `ITI_START`, `ITI_DURATION_S`가 출력됩니다. ITI의 시행 번호는 다음 시행이며, `ITI_DURATION_S`에는 대기 시간이 초 단위로 표시됩니다.
 
-SSH 터미널의 **Ctrl+C**로 중단합니다. SSH 연결을 유지하고 전경에서 실행하세요. 세션 완료 후 회색 화면은 유지되며, 자동으로 프로그램도 종료하려면 `--exit-when-done`을 추가합니다. 화면 포커스를 잃으면 중단하는 기존 동작은 유지됩니다.
+SSH 터미널의 **Ctrl+C**로 중단합니다. SSH 연결을 유지하고 전경에서 실행하세요. 세션 완료 후 검정 화면은 유지되며, 자동으로 프로그램도 종료하려면 `--exit-when-done`을 추가합니다. 화면 포커스를 잃으면 중단하는 기존 동작은 유지됩니다.
 
 `DISPLAY=:0`는 모든 Pi 화면 구성에 동일하게 적용되는 값은 아닙니다. 창이 안 뜨거나 화면 연결 오류가 나오면 데스크톱의 실제 DISPLAY/Wayland 설정과 세션 접근 권한을 확인해야 합니다. SSH 자체는 화면을 제공하지 않습니다.
 
@@ -131,7 +131,7 @@ SSH 터미널의 **Ctrl+C**로 중단합니다. SSH 연결을 유지하고 전�
 |---|---|
 | 포트를 열 수 없음 | USB 연결, 포트 이름, `dialout` 권한, 열린 시리얼 모니터 |
 | 연결했지만 준비되지 않음 | 새 스케치를 Uno에 업로드했는지, 통신 속도가 115200인지 |
-| 회색 화면에서 시작하지 않음 | 터미널의 준비 메시지 및 Space 입력 |
+| 검정 화면에서 시작하지 않음 | 터미널의 준비 메시지 및 `start` + Enter (또는 화면 키보드 Space) 입력 |
 | Lick이 기록되지 않음 | D11 연결과 LOW→HIGH 센서 신호, 터미널 오류 및 이벤트 로그 |
 | 화면이 없거나 다른 화면에 표시됨 | Pi 데스크톱 세션, 디스플레이 연결, `screen_index` |
 | 자극 크기 오류 | `diameter_px`가 화면에 들어가는지 |
