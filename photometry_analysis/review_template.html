@@ -9,8 +9,8 @@
 <div class="controls"><label>시작 <input id="viewStart" type="number" min="0" value="0" step="1"> 초</label><label>끝 <input id="viewEnd" type="number" step="1"> 초</label><button id="applyRange">구간 보기</button><button id="resetRange">전체 보기</button></div>
 <p id="windowMean" class="muted"></p><p class="muted">구간 평균은 ITI를 포함한 실제 전체 샘플의 시간 평균입니다. 아래 trial 제외 선택은 적용하지 않습니다.</p><button id="windowDownload">표시 구간 평균 CSV 저장</button>
 <canvas id="sessionPlot" style="height:510px" aria-label="Aligned signal control dF/F and licks"></canvas></section>
-<section><h2>02 · 개별 trial 확인</h2><div class="controls"><button id="prevTrial">← 이전</button><label>Trial <select id="trialSelect"></select></label><button id="nextTrial">다음 →</button><button id="toggleCurrent">현재 trial 제외 / 포함</button><span id="trialInfo" class="muted"></span></div>
-<div class="legend"><span><i class="cue-key"></i>Cue 시작–끝</span><span class="green">점선: cue ACK</span><span class="amber">점선: reward</span><span>실선: trial 종료</span><span id="endingLegend" hidden style="color:#8756aa">보라색 실선 · 종료 lick</span></div><canvas id="trialPlot" style="height:460px"></canvas></section>
+<section><h2>02 · 개별 trial 확인</h2><label>개별 trial·전체 평균 dF/F <select id="dffMethod"><option value="dff_percent">선택한 기존 분석법</option><option value="signal_only_dff_percent">Signal only · 시간 IRLS</option></select></label><div class="controls"><button id="prevTrial">← 이전</button><label>Trial <select id="trialSelect"></select></label><button id="nextTrial">다음 →</button><button id="toggleCurrent">현재 trial 제외 / 포함</button><span id="trialInfo" class="muted"></span></div>
+<div class="legend"><span><i class="cue-key"></i>Cue 시작–끝</span><span class="green">점선: cue ACK</span><span class="amber">점선: reward</span><span>실선: trial 종료</span><span id="endingLegend" hidden style="color:#8756aa">보라색 실선 · 세션 첫 lick 중앙값, 점선 · 해당 trial의 첫 lick</span></div><canvas id="trialPlot" style="height:460px"></canvas></section>
 <section><h2>03 · 평균에 사용할 trial 선택</h2><p>문 열림 등으로 제외할 trial의 체크를 해제하세요. <span class="count" id="includedCount"></span></p><p class="muted">선택은 평균·SEM·lick raster에 적용됩니다. 이미 계산한 전처리값이나 bleaching/motion 보정 계수는 다시 추정하지 않습니다. 원본은 변경되지 않습니다.</p>
 <div class="controls"><button id="selectAll">전체 포함</button><button id="selectNone">전체 제외</button><label>제외 번호 <input id="excludeInput" type="text" placeholder="예: 3,7,12-15"></label><button id="applyExclusions">번호로 제외 적용</button></div><div id="selectionError" role="alert"></div><div class="trial-grid" id="trialGrid"></div>
 <div class="controls"><button class="primary" id="downloadAverage">선택한 dF/F 평균 CSV 저장</button><button id="downloadSummary">trial별 평균·선택 CSV 저장</button><button id="downloadSelection">제외 목록 JSON 저장</button></div>
@@ -21,13 +21,13 @@
 <p>기본 비교값은 dF/F (%)입니다. F₀는 선택한 계산법의 분모, Signal은 측정 전압입니다. 그룹은 제외 전 완료 trial 순서로 고정합니다. 100회라면 1–33 / 34–66 / 67–100번입니다.</p>
 <div class="controls"><label>비교값 <select id="compareMetric"><option value="dff_percent">dF/F (%)</option><option value="f0_v">F₀ (V)</option><option value="signal_v">Signal (V)</option></select></label>
 <label>선택 평균 trial <input id="compareFirst" type="number" step="1">–<input id="compareLast" type="number" step="1"></label>
-<label>trial 내 시간 <input id="compareStart" type="number" value="0" min="0" step="any">–<input id="compareEnd" type="number" step="any">초</label>
+<label>trial 내 시간 <input id="compareStart" type="number" value="-2" min="-2" step="any">–<input id="compareEnd" type="number" step="any">초</label>
 <button id="compareApply">평균 계산</button><button id="compareDownload">비교 평균 CSV 저장</button><button id="trendDownload">Trial별 구간 평균 CSV 저장</button></div>
-<p id="compareError" role="alert" style="color:#aa2e2e"></p><p class="muted">trial 번호 범위는 선택 평균에 적용됩니다. early/middle/late는 전체 trial을 사용하며 03번의 제외 선택을 함께 반영합니다. <span id="comparisonSupport">세 그룹의 x축은 trial 시작 이후 0–10초로 고정되며, 포함된 모든 trial이 공유하는 데이터 구간에서 비교합니다.</span> trial 내 시간 범위 입력은 선택 평균과 trial별 구간 평균에 적용됩니다. 각 그룹의 평균에 trial마다 동일한 가중치를 줍니다. 구간을 바꿔도 F₀를 재추정하지 않습니다.</p>
-<p class="muted"><i class="cue-key"></i>청록색 띠는 각 그래프에 포함된 trial들의 cue 시작·끝 시각 중앙값입니다. <span class="amber">점선은 reward 시각의 중앙값입니다.</span></p><h3>선택한 trial 범위 평균</h3><p id="selectedRangeInfo" class="muted"></p><canvas id="selectedRangePlot" style="height:290px"></canvas>
+<p id="compareError" role="alert" style="color:#aa2e2e"></p><p id="stageWindowInfo" class="muted">trial 번호 범위는 선택 평균에 적용됩니다. early/middle/late는 전체 trial을 사용하며 03번의 제외 선택을 함께 반영합니다. 세 그룹은 −2~10초에서 포함 trial의 공통 시간 구간을 비교합니다. 각 그룹의 평균에 trial마다 동일한 가중치를 줍니다. 구간을 바꿔도 F₀를 재추정하지 않습니다.</p>
+<p class="muted"><i class="cue-key"></i>청록색 띠는 각 그래프에 포함된 trial들의 cue 시작·끝 시각 중앙값입니다.</p><h3>선택한 trial 범위 평균</h3><p id="selectedRangeInfo" class="muted"></p><canvas id="selectedRangePlot" style="height:290px"></canvas>
 <h3><span style="color:#18755f">Early</span> · <span style="color:#b47720">Middle</span> · <span style="color:#8756aa">Late</span></h3><p id="stageInfo" class="muted"></p><canvas id="stagePlot" style="height:320px"></canvas>
 <h3>Trial별 구간 평균 변화</h3><p id="progressionInfo" class="muted"></p><canvas id="progressionPlot" style="height:290px"></canvas></section>
-<section><h2>정렬 및 처리 기준</h2><div class="small-grid"><div><p id="fitInfo"></p><p id="denominatorInfo"></p><p class="muted">공유 D7의 cue·reward 사전 트리거를 Digital 1 상승 에지와 대응시켰습니다. TTL은 cue/reward보다 100ms 먼저 나가지만, lick에는 100ms를 별도로 더하지 않습니다.</p><p class="muted">cue 표시는 Arduino의 CUE_ON 확인 응답 시각입니다. 실제 모니터 광출력 시각을 측정한 값은 아닙니다. Arduino_ms가 없는 host 이벤트의 정렬 시각은 CSV에 비워 두었습니다.</p></div><div><p>Signal = analog_2 · Control = analog_1</p><p class="muted"><span id="preprocessingInfo"></span> SESSION_START부터 마지막 완료 TRIAL_END까지 먼저 자른 데이터에 적용합니다.</p><p class="muted">평균 파형은 TRIAL_START 기준 같은 시각의 dF/F를 trial 간 평균한 값입니다. trial별 평균 CSV는 각 trial 안의 원래 dF/F 샘플을 시간 평균한 값입니다.</p></div></div></section>
+<section><h2>Signal-only dF/F · trial별 heatmap</h2><p id="paperInfo"></p><img src="__PAPER_IMAGE__" alt="Signal-only dF/F session mean and heatmap by trial" style="width:100%;height:auto"></section><section><h2>정렬 및 처리 기준</h2><div class="small-grid"><div><p id="fitInfo"></p><p id="denominatorInfo"></p><p class="muted">공유 D7의 cue·reward 사전 트리거를 Digital 1 상승 에지와 대응시켰습니다. TTL은 cue/reward보다 100ms 먼저 나가지만, lick에는 100ms를 별도로 더하지 않습니다.</p><p class="muted">cue 표시는 Arduino의 CUE_ON 확인 응답 시각입니다. 실제 모니터 광출력 시각을 측정한 값은 아닙니다. Arduino_ms가 없는 host 이벤트의 정렬 시각은 CSV에 비워 두었습니다.</p></div><div><p>Signal = analog_2 · Control = analog_1</p><p class="muted"><span id="preprocessingInfo"></span> SESSION_START부터 마지막 완료 TRIAL_END까지 먼저 자른 데이터에 적용합니다.</p><p class="muted">평균 파형은 TRIAL_START 기준 같은 시각의 dF/F를 trial 간 평균한 값입니다. trial별 평균 CSV는 각 trial 안의 원래 dF/F 샘플을 시간 평균한 값입니다.</p></div></div></section>
 </main><script id="analysisData" type="application/json">__ANALYSIS_DATA__</script><script>
 'use strict';
 const D=JSON.parse(document.getElementById('analysisData').textContent), Q=D.qc;
@@ -64,6 +64,8 @@ function exportSummary(){let rows=['trial_id,included,duration_s,mean_dff_percen
 __AVERAGE_SCRIPT__
 __COMPARISON_SCRIPT__
 initComparison();
+$('dffMethod').onchange=refresh;
+$('paperInfo').textContent=`최초 선택 trial의 평균과 heatmap · 세션 F₀average = ${Q.signal_only.f0_average_v??'계산 불가'} V. 회색은 제외 또는 자료 없음. 색 범위는 절댓값의 99백분위입니다.`;
 $('averageModeControl').hidden=!operant;
 $('endingLegend').hidden=!operant;
 $('averageMode').onchange=refresh;

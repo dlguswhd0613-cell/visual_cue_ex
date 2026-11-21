@@ -2,71 +2,86 @@
 const metricNames={dff_percent:'dF/F (%)',f0_v:'F₀ (V)',signal_v:'Signal (V)'};
 const stageColors={early:'#18755f',middle:'#b47720',late:'#8756aa'};
 let comparison=null;
-function commonAverage(selected,metric,window,supportSelection=selected,commonSupport=true){
+function commonAverage(selected,metric,window,supportSelection=selected){
   const result=computeAverage(selected,metric), total=supportSelection.filter(Boolean).length;
   for(let j=0;j<D.relative_time.length;j++){
     const t=D.relative_time[j];
-    const available=commonSupport?total>0&&supportSelection.every((yes,i)=>!yes||finite(D.matrices[metric][i][j])):result.n[j]>0;
-    if(!available||t<window[0]-1e-9||t>window[1]+1e-9){result.mean[j]=null;result.sem[j]=null;}
+    const available=total>0&&supportSelection.every((yes,i)=>!yes||finite(D.matrices[metric][i][j]));
+    if((operant?result.n[j]===0:!available)||t<window[0]-1e-9||t>window[1]+1e-9){result.mean[j]=null;result.sem[j]=null;}
   }
   result.trial_ids=D.trials.filter((r,i)=>selected[i]).map(r=>r.trial_id);
   result.total=result.trial_ids.length;
+  result.time=D.relative_time;
+  result.window=window;
   return result;
 }
 function comparisonSettings(){
   const metric=$('compareMetric').value, first=Number($('compareFirst').value),last=Number($('compareLast').value);
   const start=Number($('compareStart').value),end=Number($('compareEnd').value);
   if(!finite(first)||!finite(last)||first>last||!Number.isInteger(first)||!Number.isInteger(last))throw Error('trial 번호 범위를 확인하세요.');
-  if(!finite(start)||!finite(end)||start<0||end<=start||end>D.relative_time.at(-1)+1e-8)throw Error('trial 내 시간 범위를 확인하세요.');
+  if(!finite(start)||!finite(end)||start < -2||end<=start||end>D.relative_time.at(-1)+1e-8)throw Error('trial 내 시간 범위를 확인하세요.');
   return{metric,first,last,window:[start,end]};
 }
 function computeComparison(settings){
   const {metric,first,last,window}=settings;
   const selected=include.map((yes,i)=>yes&&D.trials[i].trial_id>=first&&D.trials[i].trial_id<=last);
-  // Stage curves use a fixed trial-start window, independently of the range controls.
-  const stageWindow=[0,10];
   const groups={};
-  for(const stage of ['early','middle','late'])groups[stage]=commonAverage(include.map((yes,i)=>yes&&D.trials[i].stage===stage),metric,stageWindow,include,!operant);
+  for(const stage of ['early','middle','late']){
+    const members=include.map((yes,i)=>yes&&D.trials[i].stage===stage);
+    if(operant){
+      const result=computeAverage(members,metric,D.matrices[metric]);
+      result.trial_ids=D.trials.filter((r,i)=>members[i]).map(r=>r.trial_id);
+      result.total=result.trial_ids.length;
+      result.time=D.relative_time;
+      result.window=[-2,Q.stage_end_s];
+      for(let j=0;j<result.time.length;j++)if(result.time[j]>Q.stage_end_s){result.mean[j]=null;result.sem[j]=null;}
+      groups[stage]=result;
+    }else groups[stage]=commonAverage(members,metric,[-2,Q.stage_end_s],include);
+  }
   const indices=D.relative_time.map((t,j)=>t>=window[0]-1e-9&&t<=window[1]+1e-9?j:-1).filter(j=>j>=0);
   const trend=D.trials.map((r,i)=>{
     const values=indices.map(j=>D.matrices[metric][i][j]);
-    const covered=values.length>0&&window[1]<=r.duration_s+1e-9&&values.every(finite);
+    const covered=values.length>0&&values.every(finite);
     return{trial_id:r.trial_id,stage:r.stage,included:include[i],covered,n_samples:covered?values.length:0,
       mean:covered?values.reduce((a,b)=>a+b,0)/values.length:null};
   });
-  return {settings,stageWindow,selected:commonAverage(selected,metric,window),groups,trend};
+  return {settings,stageWindow:[-2,Q.stage_end_s],selected:commonAverage(selected,metric,window),groups,trend};
 }
 function plotComparison(id,curves,metric,window){
   const {ctx,w,h}=prepare(id),box={l:78,t:28,w:w-98,h:h-82},values=[];
   for(const c of curves)for(let j=0;j<c.mean.length;j++)if(finite(c.mean[j]))values.push(c.mean[j]-(c.sem[j]||0),c.mean[j]+(c.sem[j]||0));
   const yr=domain(values),[px,py]=axes(ctx,box,window,yr,metricNames[metric],'TRIAL_START 이후 (초)');
-  if(!values.length){ctx.textAlign='left';ctx.fillText(operant&&id==='stagePlot'?'선택한 trial의 데이터가 없습니다.':'선택한 trial들의 공통 데이터 구간이 없습니다.',box.l+12,box.t+30);return;}
+  if(!values.length){ctx.textAlign='left';ctx.fillText('선택한 trial들의 공통 데이터 구간이 없습니다.',box.l+12,box.t+30);return;}
   const trialIds=new Set(curves.flatMap(c=>c.trial_ids));
   const rows=D.trials.filter(r=>trialIds.has(r.trial_id));
   cueSpan(ctx,box,window,...medianCue(rows));
+  if(operant)marker(ctx,box,window,Q.median_first_lick_s,lickColor,false);
+  marker(ctx,box,window,median(rows.map(r=>r.reward_relative_s)),colors[1]);
   for(const c of curves){
+    const time=c.time;
     ctx.fillStyle=c.color+'25';let j=0;
     while(j<c.mean.length){
       while(j<c.mean.length&&(!finite(c.mean[j])||!finite(c.sem[j])))j++;
       const begin=j;while(j<c.mean.length&&finite(c.mean[j])&&finite(c.sem[j]))j++;
       if(j===begin)continue;
-      ctx.beginPath();for(let k=begin;k<j;k++){const x=px(D.relative_time[k]),y=py(c.mean[k]+c.sem[k]);if(k===begin)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
-      for(let k=j-1;k>=begin;k--)ctx.lineTo(px(D.relative_time[k]),py(c.mean[k]-c.sem[k]));ctx.closePath();ctx.fill();
+      ctx.beginPath();for(let k=begin;k<j;k++){const x=px(time[k]),y=py(c.mean[k]+c.sem[k]);if(k===begin)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+      for(let k=j-1;k>=begin;k--)ctx.lineTo(px(time[k]),py(c.mean[k]-c.sem[k]));ctx.closePath();ctx.fill();
     }
-    line(ctx,D.relative_time,c.mean,box,window,yr,c.color,2);
+    line(ctx,time,c.mean,box,window,yr,c.color,2);
   }
-  marker(ctx,box,window,median(rows.map(r=>r.reward_relative_s)),'#ab6f27');
 }
 function renderComparisons(){
   try{comparison=computeComparison(comparisonSettings());$('compareError').textContent='';}
   catch(e){comparison=null;$('compareError').textContent=e.message;return;}
-  const {settings,stageWindow,selected,groups,trend}=comparison;
+  const {settings,selected,groups,trend}=comparison;
   plotComparison('selectedRangePlot',[{...selected,color:'#375ca8'}],settings.metric,settings.window);
-  plotComparison('stagePlot',Object.entries(groups).map(([name,c])=>({...c,color:stageColors[name]})),settings.metric,stageWindow);
+  plotComparison('stagePlot',Object.entries(groups).map(([name,c])=>({...c,color:stageColors[name]})),settings.metric,[-2,Q.stage_end_s]);
   $('selectedRangeInfo').textContent=`Trial ${settings.first}–${settings.last} · 포함 ${selected.total}개 · 실선 평균, 음영 ±SEM`;
   $('stageInfo').textContent=Object.entries(groups).map(([name,c])=>{
     const ids=D.trials.filter(r=>r.stage===name).map(r=>r.trial_id);
-    return `${name}: ${ids.length?ids[0]+'–'+ids.at(-1):'없음'}번 / 포함 ${c.total}개`;
+    const counts=c.n.filter((n,j)=>finite(c.mean[j]));
+    const support=operant?` · 시점별 N ${counts.length?Math.min(...counts):0}–${counts.length?Math.max(...counts):0}`:'';
+    return `${name}: ${ids.length?ids[0]+'–'+ids.at(-1):'없음'}번 / 포함 ${c.total}개${support}`;
   }).join(' · ');
   const {ctx,w,h}=prepare('progressionPlot'),box={l:78,t:28,w:w-98,h:h-82};
   const shown=trend.filter(r=>r.included&&finite(r.mean)),yr=domain(shown.map(r=>r.mean));
@@ -77,9 +92,9 @@ function renderComparisons(){
 }
 function exportComparison(){
   if(!comparison)return;
-  const {settings,stageWindow,selected,groups}=comparison;
+  const {settings,selected,groups}=comparison;
   const rows=['group,metric,trial_window_start_s,trial_window_end_s,time_from_trial_start_s,mean,sem,n_trials,trial_ids'];
-  for(const [name,c]of Object.entries({selected,...groups}))for(let j=0;j<c.mean.length;j++)if(finite(c.mean[j]))rows.push([name,settings.metric,...(name==='selected'?settings.window:stageWindow),D.relative_time[j],c.mean[j],c.sem[j]??'',c.n[j],c.trial_ids.join(';')].join(','));
+  for(const [name,c]of Object.entries({selected,...groups}))for(let j=0;j<c.mean.length;j++)if(finite(c.mean[j]))rows.push([name,settings.metric,...c.window,c.time[j],c.mean[j],c.sem[j]??'',c.n[j],c.trial_ids.join(';')].join(','));
   download('trial_comparison.csv',rows.join('\r\n'));
 }
 function renderWindowMean(){
@@ -92,10 +107,10 @@ function renderWindowMean(){
   return{start:range[0],end:range[1],n,...means};
 }
 function initComparison(){
+  if(operant)$('stageWindowInfo').textContent='Early/middle/late는 trial 시작 후 -2초부터 보상 후 구간까지 표시합니다. Trial 종료 후 ITI를 포함하고 다음 trial 시작 전까지만 사용합니다. 각 시점에 기록된 trial로 평균과 SEM을 계산합니다. 아래 시간 선택은 선택 평균과 trial별 변화에 적용됩니다.';
   $('compareFirst').value=D.trials[0].trial_id;$('compareLast').value=D.trials.at(-1).trial_id;
-  if(operant)$('comparisonSupport').textContent='Operant의 세 그룹은 trial 시작 이후 0–10초를 고정 x축으로 표시하며, 각 시점에 데이터가 남아 있는 trial로 평균합니다.';
   const shortest=Math.min(...D.trials.filter(r=>r.photometry_complete).map(r=>r.duration_s));
-  const commonEnd=finite(shortest)?Math.floor(shortest*Q.sampling_rate_hz)/Q.sampling_rate_hz:D.relative_time.at(-1);
+  const commonEnd=operant?Math.min(Q.display_end_s,D.relative_time.at(-1)):finite(shortest)?Math.floor(shortest*Q.sampling_rate_hz)/Q.sampling_rate_hz:D.relative_time.at(-1);
   $('compareEnd').value=String(commonEnd);$('compareEnd').max=String(D.relative_time.at(-1));
   $('compareApply').onclick=renderComparisons;$('compareMetric').onchange=renderComparisons;
   $('compareDownload').onclick=exportComparison;

@@ -102,7 +102,7 @@ SEM은 trial 간 표본 표준편차 / sqrt(N)입니다. N=1이면 SEM을 비우
 | `lick_events.csv` | 정확한 lick 정렬 시각, trial 번호, PPD 포함 여부 |
 | `trial_summary.csv` | trial별 시작/끝, 평균 dF/F, lick 수, 평균 포함 여부 |
 | `trial_dff_matrix.csv`, `trial_data.npz` | trial 상대 시간의 dF/F 행렬 및 signal/control 배열 |
-| `dff_average.csv` | 실제 시간 기준 화면의 평균, SEM, N. Operant는 평균 종료 lick 시각까지 |
+| `dff_average.csv` | 실제 시간 기준 화면의 평균, SEM, N. Operant는 세션 중앙 lick 이후 2초까지 |
 | `dff_average_common_support.csv` | 포함 trial의 공통 구간 평균, SEM, N |
 | `dff_average_lick_aligned.csv`, `.png`, `.svg` | Operant의 종료 lick을 맞춘 평균과 그래프 |
 | `dff_average_available_support.csv` | 각 시각에 데이터가 남은 trial의 평균, SEM, N |
@@ -138,35 +138,29 @@ py align_photometry.py --ppd "D:\recordings\mouse01.ppd" --events "D:\behavior\e
 
 ## 세션 구간 평균과 early / middle / late 비교
 
-### Operant 개별 trial과 전체 평균
+모든 trial 시간축은 `TRIAL_START = 0` 기준으로 −2초부터 시작합니다. 초기 ITI와 trial 사이 ITI에서 실제로 기록한 샘플을 사용합니다. 추출 범위가 세션 경계나 인접 trial에 닿으면 해당 샘플은 결측으로 둡니다. 세션 전체 보기에는 SESSION_START 시계를 사용합니다.
 
-로그의 `TASK_OK`로 task를 확인합니다. 이전 Operant 기록은 `LICK_END_CAPS` 응답 또는
-`WAIT_LICK` 이벤트로 식별합니다. 명시적인 `TASK_OK=1`은 Pavlovian으로 처리합니다.
-`trial_summary.csv`의 `end_lick_relative_s`는 Operant trial에서 보상 후 처음 기록된 lick의
-trial 상대 시각입니다. 밸브가 닫히기 전에 lick한 경우도 포함합니다.
+Operant에서는 각 완료된 보상 trial의 `REWARD_ON` 이후 첫 lick 시각을 구합니다. 보라색 실선은 trial 시작 기준 시각의 **세션 중앙값**입니다. QC에는 보상부터 lick까지의 지연 중앙값도 따로 기록합니다. 중앙값은 trial 제외 선택 전에 한 번 계산합니다. 개별 trial, 평균, raster, heatmap은 중앙값 이후 2초까지 표시합니다. early/middle/late는 보상을 포함하도록 −2초부터 **10초와 중앙값+2초 중 더 늦은 시점**까지 표시합니다. 세 그룹 비교는 시점별로 유효한 trial에서 평균과 SEM을 계산합니다.
 
-개별 Operant 그래프는 종료 lick 시각을 x축의 오른쪽 끝에 표시합니다. 종료 lick이
-없는 trial은 trial 종료 시각을 사용합니다. 화면 04에서 두 평균을 선택할 수 있습니다.
+‘종료 lick 정렬’에서는 0초부터 각 trial의 lick까지를 세션 중앙값에 맞춰 비례 조정합니다. 시작 전 2초와 lick 뒤 2초는 실제 시간 간격을 유지합니다. ‘실제 시간’ 보기는 trial 시작에만 정렬합니다.
 
-- **실제 시간**은 실제 초 단위를 사용합니다. 선택한 trial들의 종료 lick 시각 산술평균까지
-  각 시점에 데이터가 남아 있는 trial로 평균·SEM을 계산합니다. 기여 trial 수를 함께 표시합니다.
-- **종료 lick 정렬**은 `조정 시각 = 원래 trial 상대 시각 × 평균 종료 lick / 해당 trial 종료 lick`을
-  사용합니다. 조정 시간 격자로 선형 보간해 평균하며 cue·reward·lick도 같은 비율로 옮깁니다.
-  종료 lick이 있는 선택 trial을 사용하고, 이 조정 시간은 실제 경과 시간과 구분해 표기합니다.
+### Signal-only dF/F와 heatmap
 
-두 화면 모두 평균 종료 lick을 보라색 선으로 표시하고 x축의 오른쪽 끝에 배치합니다.
-Trial 제외를 바꾸면 평균 lick, 음영, 평균과 raster가 함께 갱신됩니다. 평균 CSV 저장 버튼은
-현재 선택한 시간 기준을 내보냅니다. 저장되는 두 PNG/SVG는 최초 제외 목록을 사용합니다.
+기존 분석법을 선택하면 signal-only 결과도 함께 생성됩니다. crop된 세션 signal을 약 50 ms 중앙 이동평균(130 Hz에서 7샘플)으로 평활한 뒤, signal을 시간에 대해 절편이 있는 Tukey bisquare IRLS로 회귀합니다(기본 c=1.4). 직선 전체를 뺀 잔차를 F로 사용합니다. 각 완료 trial의 시작 전 [−1, 0)초에 기록된 원래 샘플의 F 평균이 F0each입니다. 온전한 baseline이 있는 모든 trial의 F0each를 동일 가중치로 평균한 값이 F0average입니다. trial 제외는 분모를 바꾸지 않습니다.
+
+`signal_only_dff_percent = 100 × (F − F0each) / F0average`
+
+차감한 절편까지 반영하므로 F0average는 음수이거나 0에 가까울 수 있습니다. 부호를 그대로 보존하며 수치적으로 0인 경우 해당 dF/F를 결측 처리합니다. 창 02의 dF/F 선택으로 개별 trial과 전체 평균을 전환합니다. 보고서에는 최초 선택을 적용한 signal-only 평균과 trial별 heatmap을 표시합니다. 행은 시간순 trial, 열은 trial 상대 시간, 색은 dF/F (%)입니다. `signal_only_trial_dff.csv`, `signal_only_heatmap.png`, `trial_summary.csv`(F0each), `alignment_qc.json`(F0average·회귀계수)에 수치를 저장합니다.
 
 새 코드로 분석을 다시 실행하면 `review.html`에 아래 기능이 표시됩니다. 기존 HTML은 다시 생성해야 합니다.
 
 - **01 구간 보기:** SESSION_START 기준 시작·끝 초를 지정하면 해당 구간의 실제 샘플 평균 dF/F, F₀, Signal을 표시하고 CSV로 저장합니다. ITI가 포함되며 trial 제외 목록은 이 시간 평균에 적용하지 않습니다. 데이터가 없는 구간을 0으로 채우지 않습니다.
 - **05 선택 평균:** trial 번호 범위와 trial 시작 기준 시간 범위(예: 0–6초)를 지정하면 선택한 trial들의 평균 파형과 SEM을 표시합니다. 03의 제외 목록도 반영합니다.
 - **Early / middle / late:** 완료 trial을 시간순으로 나열한 뒤 `floor(N/3)`, `floor(2N/3)` 위치에서 나눕니다. 100회는 1–33 / 34–66 / 67–100이며 나머지는 뒤 그룹에 포함합니다. 제외된 trial 때문에 경계가 바뀌지는 않습니다. 실제 trial 번호가 연속되지 않으면 순서로 나눕니다.
-- **세 곡선 비교:** dF/F (%)가 기본이며 F₀ (V) 또는 Signal (V)도 선택할 수 있습니다. HTML과 PNG/SVG의 x축은 trial 시작 기준 **0–10초**로 고정합니다. 각 trial의 같은 상대 시각을 동일 가중치로 평균합니다. Operant는 각 그룹에서 해당 시각에 데이터가 남아 있는 trial로 평균합니다. 길이를 늘이거나 압축하지 않으며, 종료 이후를 0으로 채우지 않습니다. Pavlovian과 task 미식별 기록은 포함 trial 전체의 공통 데이터 구간을 사용합니다. N=0은 빈 곡선, N=1은 SEM 없음으로 표시합니다. HTML과 PNG/SVG의 황갈색 점선은 그래프에 포함된 trial들의 `REWARD_ON` 상대 시각 중앙값이며, 기록이 없으면 생략합니다. 비교 CSV에도 0–10초 안의 유효한 평균값을 저장합니다.
+- **세 곡선 비교:** dF/F (%)가 기본이며 F₀ (V) 또는 Signal (V)도 선택할 수 있습니다. 각 trial의 같은 상대 시각을 동일 가중치로 평균합니다. Pavlovian에서는 세 그룹 모두 포함 trial 전체의 공통 시간 구간을 사용합니다. Operant에서는 위의 고정 구간에서 시점별 가용 trial을 사용합니다. N=0은 빈 곡선, N=1은 SEM 없음으로 표시합니다.
 - **Trial별 변화:** 지정한 trial 내 시간 구간의 평균을 trial마다 점으로 표시합니다. 그 시간 범위를 끝까지 기록하지 못한 trial은 점에서 제외합니다. 동일한 관찰 구간으로 진행에 따른 반응을 비교할 수 있습니다.
 
-trial 번호 범위는 선택 평균에만 적용되며, 세 그룹 비교는 전체 trial과 제외 목록을 사용합니다. 기본 trial 내 시간 범위는 전체 완전한 trial이 겹치는 구간입니다. 세 그룹 그래프는 시간 범위 입력과 관계없이 0–10초를 표시하며, 시간 범위 입력은 선택 평균과 trial별 구간 평균에 적용됩니다. 10초 이전에 trial이 모두 끝나면 이후 구간은 빈 상태로 둡니다. ITI를 포함한 세션 전체에서 한 번 추정한 계수를 세 그룹이 공유합니다. 1번의 분모는 고정된 값이며 2·3번의 분모는 각 시점의 control 회귀값입니다. Trial 제외와 구간 선택은 평균에만 적용됩니다.
+trial 번호 범위는 선택 평균에만 적용되며, 세 그룹 비교는 전체 trial과 제외 목록을 사용합니다. 기본 trial 내 시간 범위는 전체 완전한 trial이 겹치는 구간입니다. Pavlovian에서 범위를 더 늘리면 세 그룹 평균은 공통 데이터 구간에서만 표시됩니다. ITI를 포함한 세션 전체에서 한 번 추정한 계수를 세 그룹이 공유합니다. 1번의 분모는 고정된 값이며 2·3번의 분모는 각 시점의 control 회귀값입니다. Trial 제외와 구간 선택은 평균에만 적용됩니다.
 
 `early_middle_late.csv`, `.png`, `.svg`에는 최초 제외 목록으로 계산한 세 그룹 비교가 저장됩니다. PNG/SVG는 dF/F·F₀·Signal을 각각 별도 축에 표시하며, 각 축 안에 세 그룹 곡선이 겹쳐집니다. HTML에서 변경한 선택은 비교 평균·trial별 구간 평균 CSV로 별도 저장하세요.
 

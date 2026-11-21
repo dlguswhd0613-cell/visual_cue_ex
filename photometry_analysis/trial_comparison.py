@@ -29,6 +29,17 @@ def stage_labels(n):
     return labels
 
 
+def session_windows(session_time, starts, ends, fs, limits):
+    """Sample from -2 s, stopping at the adjacent trials and session boundaries."""
+    time = np.arange(-int(round(2*fs)), int(np.ceil(limits.max()*fs))+1) / fs
+    query = starts[:, None] + time
+    left = np.r_[session_time[0], ends[:-1]]
+    right = np.r_[starts[1:], np.inf]
+    valid = ((query >= left[:, None]) & (query < right[:, None]) &
+             (query <= session_time[-1]) & (time <= limits[:, None]+1e-9))
+    return time, np.where(valid, query, np.nan)
+
+
 def comparison_curves(matrix, include, labels, average, common_support=True):
     # Operant trials have variable endings: retain each group's available samples.
     reduce = np.all if common_support else np.any
@@ -48,6 +59,11 @@ def save_comparisons(out, trials, time, matrices, include, average, constant_f0=
     colors = ('#18755f', '#b47720', '#8756aa')
     rows = []
     operant = task == 'operant'
+    stage_end = 10.
+    if operant and 'end_lick_relative_s' in trials:
+        lick = trials.end_lick_relative_s.dropna()
+        if len(lick):
+            stage_end = max(10., float(lick.median())+2)
     rewards = trials.loc[include, 'reward_relative_s']
     rewards = rewards[np.isfinite(rewards)]
     fig, axes = plt.subplots(3, 1, figsize=(11, 10), constrained_layout=True)
@@ -55,7 +71,7 @@ def save_comparisons(out, trials, time, matrices, include, average, constant_f0=
         shade_average_cue(ax, trials.loc[include])
         curves, support = comparison_curves(matrices[metric], include, labels, average,
                                              common_support=not operant)
-        support &= (time >= 0) & (time <= 10)
+        support &= (time >= -2) & (time <= stage_end)
         for name, color in zip(STAGES, colors):
             mean, sem, count, n = curves[name]
             if metric == 'f0_v' and n and constant_f0 is not None:
@@ -67,12 +83,14 @@ def save_comparisons(out, trials, time, matrices, include, average, constant_f0=
                 rows.append(dict(metric=metric, stage=name, time_from_trial_start_s=time[j],
                                  mean=mean[j], sem=sem[j], n_trials=int(count[j])))
         ax.set(ylabel=title, xlabel='Time from TRIAL_START (s)')
-        ax.set_xlim(0, 10)
+        ax.set_xlim(-2, stage_end)
+        if operant and 'end_lick_relative_s' in trials and len(lick):
+            ax.axvline(lick.median(), color='#8756aa', label='Session median first lick')
         if not rewards.empty:
             ax.axvline(rewards.median(), color='#ab6f27', ls='--', label='Reward (median)')
         ax.legend()
     support_label = 'available samples' if operant else 'common support'
-    fig.suptitle(f'Early / middle / late: 0–10 s, {support_label}, mean ± SEM')
+    fig.suptitle(f'Early / middle / late: −2 to {stage_end:g} s, {support_label}, mean ± SEM')
     fig.savefig(out/'early_middle_late.png', dpi=170)
     fig.savefig(out/'early_middle_late.svg')
     plt.close(fig)
