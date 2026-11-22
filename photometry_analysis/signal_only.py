@@ -60,7 +60,7 @@ def save_signal_figure(out, time, matrix, trials, include, lick, right):
                         extent=[t[0]-dt,t[-1]+dt,len(trials)-.5,-.5],
                         cmap=cmap, norm=Normalize(-scale, scale))
     ticks = np.unique(np.linspace(0,len(trials)-1,min(8,len(trials)),dtype=int))
-    axes[1].set(yticks=ticks, yticklabels=trials.trial_id.iloc[ticks], ylabel='Trial ID',
+    axes[1].set(yticks=ticks, yticklabels=[f'{trials.trial_id.iloc[i]} {trials.cue_condition.iloc[i]}' if 'cue_condition' in trials else str(trials.trial_id.iloc[i]) for i in ticks], ylabel='Trial ID',
                 xlabel='Time from TRIAL_START (s)', xlim=(-2,right))
     for ax in axes:
         ax.axvline(0,color='#555',ls=':',lw=1)

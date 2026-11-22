@@ -11,15 +11,15 @@ const lickColor = '#8756aa';
 function renderTrial(){
   const r=D.trials[current];
   const endLick=operant&&finite(r.end_lick_relative_s)?r.end_lick_relative_s:null;
-  const axisEnd=Q.display_end_s;
+  const axisEnd=r.cue_condition==='CS-'?r.duration_s:Q.display_end_s;
   stack('trialPlot',D.relative_time,
     [D.matrices.signal_v[current],D.matrices.control_v[current],D.matrices[displayedMetric()][current]],
     D.trial_licks[current],[-2,axisEnd],
     [[0,'#666',true],[r.cue_relative_s,colors[0],true],[r.cue_off_relative_s,colors[0],true],
      [r.reward_relative_s,colors[1],true],[r.duration_s,'#777',false],[endLick,lickColor,true],
-     [Q.median_first_lick_s,lickColor,false]],[[r.cue_relative_s,r.cue_off_relative_s]]);
-  const ending=operant?` · 종료 lick ${fmt(endLick)}초`:'';
-  $('trialInfo').textContent=`길이 ${fmt(r.duration_s)}초${ending} · lick ${r.lick_count}회 · ${include[current]?'평균에 포함':'평균에서 제외'}`;
+     [r.cue_condition==='CS-'?null:Q.median_first_lick_s,lickColor,false]],[[r.cue_relative_s,r.cue_off_relative_s]]);
+  const ending=operant&&r.cue_condition!=='CS-'?` · 종료 lick ${fmt(endLick)}초`:'';
+  $('trialInfo').textContent=`길이 ${fmt(r.duration_s)}초 · ${cueLabel(r)}${ending} · lick ${r.lick_count}회 · ${include[current]?'평균에 포함':'평균에서 제외'}`;
   document.querySelectorAll('.trial-grid label').forEach((label,i)=>label.classList.toggle('current',i===current));
 }
 
@@ -33,9 +33,12 @@ function interpolateTrial(values,time){
 }
 
 function computeDisplayAverage(){
-  const warped=operant&&$('averageMode').value==='lick_aligned';
-  const selected=include.map((yes,i)=>yes&&(!warped||(finite(D.trials[i].end_lick_relative_s)&&D.trials[i].end_lick_relative_s>0)));
-  const medianLick=Q.median_first_lick_s;
+  const warped=operant&&$('averageMode').value==='lick_aligned'&&analysisSelection().some((yes,i)=>yes&&finite(D.trials[i].end_lick_relative_s));
+  const base=analysisSelection();
+  const selected=base.map((yes,i)=>yes&&(!warped||(finite(D.trials[i].end_lick_relative_s)&&D.trials[i].end_lick_relative_s>0)));
+  const condition=$('conditionFilter').value;
+  const medianLick=condition==='all'?Q.median_first_lick_s:(operant?median(D.trials.filter(r=>r.cue_condition===condition).map(r=>r.end_lick_relative_s)):null);
+  const conditionLimit=condition==='all'?null:conditionEnd(condition);
   let time=D.relative_time,matrix=D.matrices[displayedMetric()];
   if(warped&&finite(medianLick)){
     const steps=Math.ceil(medianLick*Q.sampling_rate_hz);
@@ -49,11 +52,11 @@ function computeDisplayAverage(){
   const result=computeAverage(selected,'dff_percent',matrix),total=selected.filter(Boolean).length;
   for(let j=0;j<time.length;j++){
     const supported=finite(medianLick)?time[j]<=medianLick+2+1e-9&&result.n[j]>0:total>0&&result.n[j]===total;
-    if(!supported){result.mean[j]=null;result.sem[j]=null;}
+    if(!supported||(finite(conditionLimit)&&time[j]>conditionLimit+1e-9)){result.mean[j]=null;result.sem[j]=null;}
   }
   let last=0;
   for(let j=0;j<time.length;j++)if(finite(result.mean[j]))last=j;
-  const axisEnd=finite(medianLick)?medianLick+2:(time[last]||D.relative_time.at(-1));
+  const axisEnd=finite(conditionLimit)?conditionLimit:finite(medianLick)?medianLick+2:(time[last]||D.relative_time.at(-1));
   const rows=D.trials.map((row,i)=>({...row,
     cue_relative_s:warped?mapLickTime(row.cue_relative_s,row.end_lick_relative_s,medianLick):row.cue_relative_s,
     cue_off_relative_s:warped?mapLickTime(row.cue_off_relative_s,row.end_lick_relative_s,medianLick):row.cue_off_relative_s,
@@ -105,6 +108,7 @@ function renderRaster(){
   ctx.strokeStyle=colors[3];ctx.lineWidth=1;
   for(let i=0;i<avg.selected.length;i++){
     if(!avg.selected[i])continue;
+    ctx.strokeStyle=conditionColors[D.trials[i].cue_condition];
     const row=avg.rows[i],top=py(ids[i]-.45),bottom=py(ids[i]+.45);
     cueSpan(ctx,{...box,t:top,h:bottom-top},xr,row.cue_relative_s,row.cue_off_relative_s);
     for(const lick of D.trial_licks[i]){
@@ -119,23 +123,23 @@ function renderRaster(){
 function refresh(){
   avg=computeDisplayAverage();
   const n=include.filter(Boolean).length;
-  $('includedCount').textContent=`${n} / ${D.trials.length} trial 포함`;
+  $('includedCount').textContent=`${n} / ${D.trials.length} trial 포함 · 조건 선택 ${analysisSelection().filter(Boolean).length}개`;
   $('trialN').textContent=`${D.trials.length} / ${n}`;
   const nonzero=avg.n.filter((x,j)=>finite(avg.mean[j]));
-  const ending=operant?` · 세션 첫 lick 중앙값 ${fmt(avg.medianLick)}초 (trial 시작 기준), 보상 후 지연 중앙값 ${fmt(Q.median_reward_to_lick_s)}초`:'';
+  const ending=operant&&finite(avg.medianLick)?` · 세션 첫 lick 중앙값 ${fmt(avg.medianLick)}초 (trial 시작 기준), 보상 후 지연 중앙값 ${fmt(Q.median_reward_to_lick_s)}초`:'';
   $('meanInfo').textContent=`시각별 기여 trial 수 ${nonzero.length?Math.min(...nonzero):0}–${nonzero.length?Math.max(...nonzero):0}${ending}`;
   if(operant)$('averageDescription').textContent=avg.warped?
     '0초부터 첫 lick까지 각 trial을 세션 중앙값에 맞춥니다. 시작 전과 lick 이후는 실제 초 단위입니다. 보라색 선은 중앙값입니다.':
-    '보라색 선은 세션의 보상 후 첫 lick 시각 중앙값입니다. 각 시점에 기록된 trial로 평균과 SEM을 계산합니다.';
+    finite(avg.medianLick)?'보라색 선은 세션의 보상 후 첫 lick 시각 중앙값입니다. 각 시점에 기록된 trial로 평균과 SEM을 계산합니다.':'선택한 trial의 실제 시간 기준 평균입니다. 종료 lick이 없는 조건에는 lick 시간 정렬을 적용하지 않습니다.';
   if(operant)$('rasterCueDescription').textContent=avg.warped?'각 행의 색 구간은 해당 trial의 시간 비율로 조정한 cue 시작–끝입니다.':'각 행의 색 구간은 해당 trial의 실제 cue 시작–끝입니다.';
   document.querySelectorAll('#trialGrid input').forEach((x,i)=>{x.checked=include[i];x.parentElement.classList.toggle('off',!include[i]);});
   $('excludeInput').value=D.trials.filter((r,i)=>!include[i]).map(r=>r.trial_id).join(',');
-  renderTrial();renderAverage();renderRaster();renderComparisons();
+  renderTrial();renderAverage();renderRaster();renderComparisons();renderConditions();
 }
 
 function exportAverage(){
   const timeName=avg.warped?'lick_aligned_time_s':'time_from_trial_start_s';
   const rows=[`${timeName},mean_dff_percent,sem_dff_percent,n_trials`];
   for(let i=0;i<avg.time.length;i++)if(finite(avg.mean[i]))rows.push([avg.time[i],avg.mean[i],avg.sem[i]??'',avg.n[i]].join(','));
-  download(displayedMetric()+'_'+(avg.warped?'lick_aligned':'real')+'_selected.csv',rows.join('\r\n'));
+  download(displayedMetric()+'_'+$('conditionFilter').value.replace('+','plus').replace('-','minus')+'_'+(avg.warped?'lick_aligned':'real')+'_selected.csv',rows.join('\r\n'));
 }

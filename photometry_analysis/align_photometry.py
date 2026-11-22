@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from signal_only import signal_only_dff, save_signal_figure
+from cue_conditions import classify_trials, save_condition_averages, COLORS as CONDITION_COLORS
 from data_import import DEFAULT_BISQUARE_CONSTANT, DEFAULT_LOW_PASS_HZ, import_ppd, preprocess_data
 from trial_comparison import (
     CUE_COLOR, CUE_ALPHA, valid_cue_trials, shade_average_cue, stage_labels, save_comparisons, session_windows,
@@ -245,10 +246,11 @@ def make_average_plot(out, licks, trials, relative_time, matrix, include, warped
         lt = np.asarray(row.plot_licks)
         if warped:
             lt = map_lick_time(lt, row.original_lick_s, median_lick)
-        axes[2].scatter(lt, np.full(len(lt), row.trial_id), marker='|', s=14, color='#302a47')
+        axes[2].scatter(lt, np.full(len(lt), row.trial_id), marker='|', s=14,
+                        color=CONDITION_COLORS.get(getattr(row, 'cue_condition', 'unknown'), '#808080'))
     axes[2].set(xlabel=xlabel, ylabel='Lick / trial ID',
                 xlim=(-2, axis_end))
-    axes[2].set_title('Shaded cue ON–OFF for each included trial', fontsize=10)
+    axes[2].set_title('Shaded cue ON–OFF; lick: CS+ orange / CS- blue / unknown gray', fontsize=10)
     fig.suptitle('Trial-ending lick aligned average' if warped else 'Trial-aligned dF/F average and lick raster; no time warping')
     fig.savefig(out / (stem + '.png'), dpi=180)
     fig.savefig(out / (stem + '.svg'))
@@ -292,6 +294,8 @@ def run(args):
     if not len(trial_rows):
         raise ValueError('No completed trials.')
     ids = trial_rows.trial_id.to_numpy(int)
+    schedule_path = Path(args.events).with_name('schedule.csv')
+    cue_labels, cue_schedule_hash = classify_trials(events, ids, schedule_path)
     starts = map_time(trial_rows.Arduino_ms_start)
     ends = map_time(trial_rows.Arduino_ms_end)
     if np.any(ends <= starts) or np.any(starts[1:] < ends[:-1]):
@@ -380,6 +384,12 @@ def run(args):
         summary_rows.append(row)
 
     trials = pd.DataFrame(summary_rows)
+    trials = trials.merge(cue_labels, on='trial_id', validate='one_to_one')
+    condition_map = dict(zip(trials.trial_id, trials.cue_condition))
+    explicit_cues = events.Event.isin(('CS_PLUS_ON', 'CS_MINUS_ON'))
+    events.loc[explicit_cues, 'trial_id'] = events.loc[explicit_cues, 'Value'].astype(int)
+    for table in (session, events, licks):
+        table['cue_condition'] = table.trial_id.map(condition_map).fillna('')
     trials['stage'] = stage_labels(len(trials))
     include = trials.included.to_numpy(bool)
     median_lick = trials.end_lick_relative_s.median() if trials.end_lick_relative_s.notna().any() else np.nan
@@ -427,6 +437,9 @@ def run(args):
           'signal_channel': args.signal, 'control_channel': args.control, 'low_pass_hz': args.low_pass,
           'method': method,
           'task': task,
+          'cue_counts': trials.cue_condition.value_counts().to_dict(),
+          'cue_schedule_sha256': cue_schedule_hash,
+          'cue_classification': 'Explicit CS_PLUS_ON/CS_MINUS_ON, or Cue in sibling schedule.csv; missing labels remain unknown. No inference from reward absence.',
           'median_first_lick_s': float(median_lick) if np.isfinite(median_lick) else None,
           'median_reward_to_lick_s': float(median_latency.median()) if len(median_latency) else None,
           'display_end_s': display_end, 'stage_end_s': stage_end, 'signal_only': paper_qc,
@@ -448,6 +461,7 @@ def run(args):
                           iterations=components['irls_iterations'], slope=components['regression_slope'],
                           intercept_v=components['regression_intercept'])
     out.mkdir(parents=True, exist_ok=True)
+    save_condition_averages(out, trials, relative_time, matrices, include, task, average_trials)
     save_signal_figure(out, relative_time, paper, trials, include, median_lick, display_end)
     pd.DataFrame(paper.T, index=relative_time, columns=ids).rename_axis('time_from_trial_start_s').to_csv(
         out/'signal_only_trial_dff.csv', float_format='%.9g')
@@ -465,8 +479,8 @@ def run(args):
     pd.DataFrame(matrices['dff_percent'].T, index=relative_time,
                  columns=[f'trial_{i}' for i in ids]).rename_axis('time_from_trial_start_s').to_csv(
                      out/'trial_dff_matrix.csv', float_format='%.9g')
-    np.savez_compressed(out/'processed_data.npz', **{k:session[k].to_numpy() for k in session})
-    np.savez_compressed(out/'trial_data.npz', trial_ids=ids, time_from_trial_start_s=relative_time, **matrices)
+    np.savez_compressed(out/'processed_data.npz', **{k:session[k].to_numpy(dtype=str if k=='cue_condition' else None) for k in session})
+    np.savez_compressed(out/'trial_data.npz', trial_ids=ids, cue_conditions=trials.cue_condition.to_numpy(dtype=str), time_from_trial_start_s=relative_time, **matrices)
     (out/'alignment_qc.json').write_text(json.dumps(qc, indent=2, ensure_ascii=False, allow_nan=False), encoding='utf-8')
     selection = {key: qc[key] for key in ('ppd_file','ppd_sha256','events_sha256')}
     selection['exclude_trials'] = trials.loc[~include, 'trial_id'].tolist()
@@ -490,6 +504,7 @@ def run(args):
     template = template.replace('__PAPER_IMAGE__', 'data:image/png;base64,' + base64.b64encode(image_bytes).decode('ascii'))
     template = template.replace('__AVERAGE_SCRIPT__', Path(__file__).with_name('trial_average.js').read_text(encoding='utf-8'))
     template = template.replace('__COMPARISON_SCRIPT__', Path(__file__).with_name('trial_comparison.js').read_text(encoding='utf-8'))
+    template = template.replace('__CONDITION_SCRIPT__', Path(__file__).with_name('cue_conditions.js').read_text(encoding='utf-8'))
     safe_payload = json_safe(payload)
     safe_payload['qc']['session_f0_v'] = session_f0
     safe_payload['session_means'] = payload['session_means']  # Preserve precision for differences of cumulative sums.

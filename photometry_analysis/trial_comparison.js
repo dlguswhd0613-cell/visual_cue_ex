@@ -24,10 +24,11 @@ function comparisonSettings(){
 }
 function computeComparison(settings){
   const {metric,first,last,window}=settings;
-  const selected=include.map((yes,i)=>yes&&D.trials[i].trial_id>=first&&D.trials[i].trial_id<=last);
+  const active=analysisSelection();
+  const selected=active.map((yes,i)=>yes&&D.trials[i].trial_id>=first&&D.trials[i].trial_id<=last);
   const groups={};
   for(const stage of ['early','middle','late']){
-    const members=include.map((yes,i)=>yes&&D.trials[i].stage===stage);
+    const members=active.map((yes,i)=>yes&&D.trials[i].stage===stage);
     if(operant){
       const result=computeAverage(members,metric,D.matrices[metric]);
       result.trial_ids=D.trials.filter((r,i)=>members[i]).map(r=>r.trial_id);
@@ -36,13 +37,13 @@ function computeComparison(settings){
       result.window=[-2,Q.stage_end_s];
       for(let j=0;j<result.time.length;j++)if(result.time[j]>Q.stage_end_s){result.mean[j]=null;result.sem[j]=null;}
       groups[stage]=result;
-    }else groups[stage]=commonAverage(members,metric,[-2,Q.stage_end_s],include);
+    }else groups[stage]=commonAverage(members,metric,[-2,Q.stage_end_s],active);
   }
   const indices=D.relative_time.map((t,j)=>t>=window[0]-1e-9&&t<=window[1]+1e-9?j:-1).filter(j=>j>=0);
   const trend=D.trials.map((r,i)=>{
     const values=indices.map(j=>D.matrices[metric][i][j]);
     const covered=values.length>0&&values.every(finite);
-    return{trial_id:r.trial_id,stage:r.stage,included:include[i],covered,n_samples:covered?values.length:0,
+    return{trial_id:r.trial_id,stage:r.stage,cue_condition:r.cue_condition,included:active[i],covered,n_samples:covered?values.length:0,
       mean:covered?values.reduce((a,b)=>a+b,0)/values.length:null};
   });
   return {settings,stageWindow:[-2,Q.stage_end_s],selected:commonAverage(selected,metric,window),groups,trend};
@@ -50,12 +51,12 @@ function computeComparison(settings){
 function plotComparison(id,curves,metric,window){
   const {ctx,w,h}=prepare(id),box={l:78,t:28,w:w-98,h:h-82},values=[];
   for(const c of curves)for(let j=0;j<c.mean.length;j++)if(finite(c.mean[j]))values.push(c.mean[j]-(c.sem[j]||0),c.mean[j]+(c.sem[j]||0));
-  const yr=domain(values),[px,py]=axes(ctx,box,window,yr,metricNames[metric],'TRIAL_START 이후 (초)');
+  const yr=domain(values),[px,py]=axes(ctx,box,window,yr,metricNames[metric]||'dF/F (%)','TRIAL_START 이후 (초)');
   if(!values.length){ctx.textAlign='left';ctx.fillText('선택한 trial들의 공통 데이터 구간이 없습니다.',box.l+12,box.t+30);return;}
   const trialIds=new Set(curves.flatMap(c=>c.trial_ids));
   const rows=D.trials.filter(r=>trialIds.has(r.trial_id));
   cueSpan(ctx,box,window,...medianCue(rows));
-  if(operant)marker(ctx,box,window,Q.median_first_lick_s,lickColor,false);
+  if(operant){const condition=$('conditionFilter').value;const lick=condition==='all'||id==='conditionPlot'?Q.median_first_lick_s:median(D.trials.filter(r=>r.cue_condition===condition).map(r=>r.end_lick_relative_s));marker(ctx,box,window,lick,lickColor,false);}
   marker(ctx,box,window,median(rows.map(r=>r.reward_relative_s)),colors[1]);
   for(const c of curves){
     const time=c.time;
@@ -114,6 +115,6 @@ function initComparison(){
   $('compareEnd').value=String(commonEnd);$('compareEnd').max=String(D.relative_time.at(-1));
   $('compareApply').onclick=renderComparisons;$('compareMetric').onchange=renderComparisons;
   $('compareDownload').onclick=exportComparison;
-  $('trendDownload').onclick=()=>{if(!comparison)return;const rows=['trial_id,stage,included,window_complete,metric,start_s,end_s,n_samples,mean'];for(const r of comparison.trend)rows.push([r.trial_id,r.stage,r.included,r.covered,comparison.settings.metric,...comparison.settings.window,r.n_samples,r.mean??''].join(','));download('trial_progression.csv',rows.join('\r\n'));};
+  $('trendDownload').onclick=()=>{if(!comparison)return;const rows=['trial_id,cue_condition,stage,included,window_complete,metric,start_s,end_s,n_samples,mean'];for(const r of comparison.trend)rows.push([r.trial_id,r.cue_condition,r.stage,r.included,r.covered,comparison.settings.metric,...comparison.settings.window,r.n_samples,r.mean??''].join(','));download('trial_progression.csv',rows.join('\r\n'));};
   $('windowDownload').onclick=()=>{const r=renderWindowMean();download('session_window_mean.csv','start_session_s,end_session_s,n_samples,dff_percent,f0_v,signal_v\r\n'+[r.start,r.end,r.n,r.dff_percent??'',r.f0_v??'',r.signal_v??''].join(','));};
 }

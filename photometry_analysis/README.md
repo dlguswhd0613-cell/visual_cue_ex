@@ -32,6 +32,29 @@ run_analysis.bat
 
 ## 결과 확인과 trial 제외
 
+CS+·CS− 과제의 기록도 같은 `select_analysis.py`로 분석합니다. **업데이트 후 원본 PPD와 events.csv를 다시 선택해 분석해야 새 조건 표시가 생성됩니다.**
+
+- 개별 trial 목록·체크박스·trial 요약에 CS+/CS−를 표시하고 lick raster도 조건별 색으로 구별합니다.
+- `평균·raster·진행 비교 조건`에서 전체/CS+/CS−/미분류를 선택하면 기존 평균, raster, 선택 구간 평균 및 early/middle/late를 해당 조건으로 제한합니다. early/middle/late 경계는 세션 전체 완료 trial 순서로 고정합니다.
+- `CS+ · CS− 조건별 평균 비교`는 두 조건의 평균 ±SEM을 같은 그래프에 표시합니다. 이 그래프는 조건 필터와 lick 시간 변형을 적용하지 않으며, trial 제외와 dF/F 계산값 선택은 반영합니다. 기존 dF/F와 signal-only dF/F 모두 지원합니다.
+- 조건별 평균은 −2초부터 실제 초 단위로 계산하며, 각 시점에 존재하는 값을 가진 trial마다 같은 가중치를 줍니다. CS+ Operant는 제외 전 첫 lick 중앙값 +2초까지, CS−는 해당 조건의 원래 trial 종료까지 표시합니다. 결측은 보간으로 메우거나 0으로 채우지 않고 N을 함께 저장합니다. N=1이면 SEM은 비워 둡니다.
+
+조건은 `events.csv`의 `CS_PLUS_ON`/`CS_MINUS_ON`과 trial 번호로 읽습니다. host 이벤트에 Arduino 시간이 없어도 조건 표시는 사용할 수 있습니다. 함께 있는 `schedule.csv`에 `Trial, Cue`(CS+/CS−) 정보가 있으면 빠진 조건을 보완하고, 두 파일의 조건이 충돌하면 오류를 표시합니다. 기존 Gabor 기록처럼 조건 정보가 없으면 `unknown`(미분류)으로 남깁니다. 보상이 없다는 이유만으로 CS−로 분류하지 않습니다. 시행표를 사용하는 경우 `events.csv`와 같은 폴더에 보관하세요.
+
+**CS+·CS−별로 회귀나 분모를 다시 추정하지 않습니다.** 실험 구간을 자른 후 세션 전체에서 계산한 dF/F를 그룹으로 나누어 평균합니다. Signal-only의 F₀average도 세션 공통 값을 유지합니다.
+
+추가 출력은 다음과 같습니다.
+
+| 파일 | 내용 |
+|---|---|
+| `trial_summary.csv` | trial별 `cue_condition`, `cue_source` 추가 |
+| `condition_averages.csv` | 조건·계산법·시간별 평균, SEM, 기여 trial 수 |
+| `condition_summary.csv` | 조건별 완료/포함 수, trial 내 평균값들의 평균 및 SEM |
+| `dff_percent_by_condition.png/.svg` | 기존 dF/F의 조건별 비교 |
+| `signal_only_dff_percent_by_condition.png/.svg` | Signal-only dF/F의 조건별 비교 |
+
+`trial_data.npz`의 `cue_conditions`와 `processed_data.csv`, `events_aligned.csv`, `lick_events.csv`에도 조건을 보관합니다. ITI처럼 trial에 속하지 않는 행은 조건을 비워 둡니다. HTML에서 제외를 변경한 뒤에는 `조건별 평균 CSV 저장`을 눌러 현재 선택을 저장하세요. 최초 PNG/CSV 및 signal-only heatmap은 최초 선택의 결과이며, 조건 필터로 바뀌는 브라우저 그래프와 구별됩니다.
+
 `review.html`은 Chrome/Edge에서 오프라인으로 열 수 있습니다. 전체 세션과 개별 trial의
 signal·control·dF/F·lick을 확인하고, trial 체크를 해제하면 평균과 SEM이 다시 계산됩니다.
 **선택한 dF/F 평균 CSV 저장**, **trial별 평균·선택 CSV 저장**, 제외 목록 JSON 저장을
