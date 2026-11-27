@@ -54,6 +54,7 @@ Install dependency once:  pip install pyserial
 
 import argparse
 import csv
+import re
 import threading
 import time
 from datetime import datetime
@@ -90,6 +91,11 @@ TOTAL_TRIALS_CONDITIONING = 100
 TOTAL_REWARDS_HABITUATION = 80
 
 STATUS_REPORT_INTERVAL_S = 60  # how often to print the all-rig progress summary
+
+
+def filename_component(value):
+    """Keep IDs and serial paths within one portable filename component."""
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', str(value)).strip(' ._') or 'unnamed'
 
 
 class ArduinoLogger(threading.Thread):
@@ -193,7 +199,7 @@ class ArduinoLogger(threading.Thread):
     def _open_csv(self):
         self.output_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = self.output_dir / f"{stamp}_{self.mouse_id}_{self.port}.csv"
+        path = self.output_dir / f"{stamp}_{filename_component(self.mouse_id)}_{filename_component(self.port)}.csv"
         self.csv_file = open(path, "w", newline="", encoding="utf-8")
         self.csv_writer = csv.writer(self.csv_file)
         self.csv_writer.writerow(["PC_Timestamp", "Arduino_ms", "Event", "Value"])
@@ -208,7 +214,7 @@ class ArduinoLogger(threading.Thread):
             suffix, headers = "conditioning_executed", ["Trial", "CS_Type", "ITI_Duration_S"]
         else:
             suffix, headers = "habituation_executed", ["Reward", "ITI_Duration_S"]
-        path = self.output_dir / f"{stamp}_{self.mouse_id}_{self.port}_{suffix}.csv"
+        path = self.output_dir / f"{stamp}_{filename_component(self.mouse_id)}_{filename_component(self.port)}_{suffix}.csv"
         self.executed_file = open(path, "w", newline="", encoding="utf-8")
         self.executed_writer = csv.writer(self.executed_file)
         self.executed_writer.writerow(headers)
