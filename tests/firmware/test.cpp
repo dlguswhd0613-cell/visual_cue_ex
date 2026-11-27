@@ -303,4 +303,23 @@ int main() {
   assertSafe();assert(state==IDLE);assert(!has(",TRIAL_END,"));
  }
  std::cout<<"PASS Pavlovian TTL, nonreward, millis rollover and STOP/watchdog\n";
+
+ // Headless habituation host: a 1-second internal handshake is included in
+ // the target ITI. Firmware still controls the valve pulse and lick gate.
+ reset();command("CONFIG 2 0 1 1000 30 30 89");
+ command("TRIAL 1 89 1");command("TRIAL 2 9 1");command("START");
+ until(ITI);auto initialHabITI=fakeNow;
+ until(WAIT_CUE_ON);command("CUE_ON 1");tick(1);command("CUE_OFF 1");
+ lick(); // An early lick must not satisfy reward consumption.
+ until(VALVE_OPEN);assert(fakeNow-initialHabITI==90000);
+ tick(30);assert(state==WAIT_REWARD_LICK);assert(pins[12]==LOW);
+ tick(10000);assert(state==WAIT_REWARD_LICK);assert(!has(",REWARD_ON,2\n"));
+ lick();assert(state==ITI);auto secondHabITI=fakeNow;
+ until(WAIT_CUE_ON);command("CUE_ON 2");tick(1);command("CUE_OFF 2");
+ until(VALVE_OPEN);assert(fakeNow-secondHabITI==10000);
+ tick(30);assert(state==WAIT_REWARD_LICK);
+ tick(10000);assert(!has(",SESSION_END,"));
+ lick();assert(state==IDLE);assert(has(",SESSION_END,2\n"));assertSafe();
+ assert(!has(",ERROR,"));assert(!has(",CUE_TRIGGER_ON,"));assert(!has(",REWARD_TRIGGER_ON,"));
+ std::cout<<"PASS headless habituation handshake,90s/10s water intervals,30ms valve,pre-reward lick exclusion and final lick gate\n";
 }

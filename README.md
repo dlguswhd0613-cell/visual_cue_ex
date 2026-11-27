@@ -77,6 +77,8 @@ ITI 시작 시 터미널에는 `ITI_START: 2`(다음 시행 번호), `ITI_DURATI
 
 ## 빠른 실행
 
+**물만 주는 habituation:** 현재 시각 큐용 Uno 펌웨어에서 `python3 habituation.py --port /dev/ttyACM0 --mouse-id NPY195_2`를 실행한 뒤 SSH 터미널에 `start` 또는 `2`를 입력합니다. 보상 80회, 밸브 30ms, 보상 후 lick 확인 → ITI 10–20초 → 다음 보상 순서입니다. 기존 habituation 시행표도 사용할 수 있습니다. [실행·설정·기록 안내](docs/habituation.md)를 참고하세요.
+
 **pyPhotometry TTL만 시험:** 최신 Uno 스케치를 업로드한 뒤 `python3 test_ttl.py --port /dev/ttyACM0`을 실행하면 D7에서만 20ms 펄스를 10초 간격으로 5번 보냅니다. 행동 프로그램은 종료하고 pyPhotometry 수집을 먼저 시작하세요. [단독 시험 안내](docs/pyphotometry.md#d7-ttl만-단독-시험하기)를 참고하세요.
 
 Python 3.10 이상과 [requirements.txt](requirements.txt)의 패키지가 필요합니다. 아래 명령은 저장소 폴더에서 실행합니다.
